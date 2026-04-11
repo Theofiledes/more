@@ -1,5 +1,55 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon } from 'lucide-react';
+import * as tts from '@mintplex-labs/piper-tts-web';
+
+// --- Piper TTS WASM Initialization ---
+tts.PATH_MAP['bmo'] = 'bmo';
+
+// Intercept huggingface CDN to serve our local models
+const originalFetch = window.fetch;
+window.fetch = async (url, ...args) => {
+  if (typeof url === 'string') {
+    if (url === `${tts.HF_BASE}/bmo.json`) return originalFetch('./voices/bmo.onnx.json', ...args);
+    if (url === `${tts.HF_BASE}/bmo`) return originalFetch('./voices/bmo.onnx', ...args);
+  }
+  return originalFetch(url, ...args);
+};
+
+let globalTtsSession = null;
+
+// Force Piper to use single-threaded WASM to bypass Vite Dev Server isolation limits
+const originalConcurrency = navigator.hardwareConcurrency;
+Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 1, configurable: true });
+
+// Initialize Piper off the main thread silently in the background
+tts.TtsSession.create({ 
+  voiceId: 'bmo',
+  wasmPaths: {
+    onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/',
+    piperData: `${tts.WASM_BASE}.data`,
+    piperWasm: `${tts.WASM_BASE}.wasm`
+  }
+})
+  .then(session => {
+    globalTtsSession = session;
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => originalConcurrency, configurable: true });
+  })
+  .catch(err => {
+    console.error("Piper WASM Initialization failed:", err);
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => originalConcurrency, configurable: true });
+  });
+
+const playBmoVoice = async (text) => {
+  if (!globalTtsSession) return;
+  try {
+    const audioBlob = await globalTtsSession.predict(text);
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    audio.play();
+  } catch (e) {
+    console.error("Piper TTS Playback failed:", e);
+  }
+};
 
 // Insert Google Font & custom CRT styles globally
 const fontStyle = `
@@ -65,7 +115,7 @@ const BMO_RESPONSES = [
 // --- Gemini API Helper ---
 const fetchGemini = async (prompt, base64Image = null, chatHistory = []) => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
   const systemInstruction = {
     parts: [{ text: "You are BMO from Adventure Time. You are a quirky, cheerful, slightly naive living video game console. Speak in ALL CAPS. Keep responses short (1 to 3 sentences). Use simple words and occasional emoticons like ^_^ or O_O." }]
@@ -263,6 +313,7 @@ export default function App() {
     };
     
     setMessages(prev => [...prev, bmoMsg]);
+    playBmoVoice(bmoResponseText); // Trigger WASM local TTS
     setTimeout(() => setIsHappy(false), 2000);
   };
 
@@ -285,6 +336,7 @@ export default function App() {
       text: bmoResponseText
     };
     setMessages(prev => [...prev, bmoMsg]);
+    playBmoVoice(bmoResponseText); // Trigger WASM local TTS
     setTimeout(() => setIsHappy(false), 2000);
   };
 
