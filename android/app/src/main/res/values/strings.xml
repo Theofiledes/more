@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BMOApp</string>
+    <string name="title_activity_main">BMOApp</string>
+    <string name="package_name">com.anthony.bmoapp</string>
+    <string name="custom_url_scheme">com.anthony.bmoapp</string>
+</resources>
