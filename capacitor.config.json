@@ -1,5 +1,10 @@
 {
   "appId": "com.anthony.bmoapp",
   "appName": "BMOApp",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
 }

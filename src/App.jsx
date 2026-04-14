@@ -159,6 +159,68 @@ const fetchGemini = async (prompt, base64Image = null, chatHistory = []) => {
   }
 };
 
+// --- End Gemini API Helper ---
+
+// --- OpenClaw API Helper ---
+const pingOpenClaw = async () => {
+  const apiUrl = import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789";
+  const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "";
+  try {
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/models`, {
+      method: "GET",
+      headers: { "Authorization": `Bearer ${apiToken}` }
+    });
+    return response.ok;
+  } catch (err) {
+    return false;
+  }
+};
+
+const sendOpenClawCommand = async (command, history = []) => {
+  const apiUrl = import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789";
+  const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "";
+  
+  if (!apiToken) {
+    console.warn("No OpenClaw API token found in .env");
+  }
+
+  // Map history to OpenAI format
+  const messages = [
+    ...history.map(m => ({
+      role: m.sender === 'user' ? 'user' : 'assistant',
+      content: m.text
+    })),
+    { role: "user", content: command }
+  ];
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute client-side timeout
+
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/chat/completions`, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiToken}`
+      },
+      body: JSON.stringify({
+        model: "openclaw",
+        messages: messages
+      }),
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) throw new Error(`OpenClaw error! status: ${response.status}`);
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || null;
+  } catch (err) {
+    console.error("OpenClaw command failed:", err);
+    return null;
+  }
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState('Anthony');
   const [isAuthenticated, setIsAuthenticated] = useState(false); // PIN lock state
@@ -177,6 +239,33 @@ export default function App() {
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
   const [useCrtFilter, setUseCrtFilter] = useState(true);
+  const [activeBrain, setActiveBrain] = useState('openclaw'); // Default to openclaw
+
+  // --- Startup Self-Check ---
+  useEffect(() => {
+    const checkOpenClaw = async () => {
+      const isAlive = await pingOpenClaw();
+      if (isAlive) {
+        const result = await sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?");
+        if (result) {
+          const greeting = {
+            id: Date.now(),
+            chatId: activeChatId,
+            user: currentUser,
+            sender: 'bmo',
+            type: 'text',
+            text: result
+          };
+          setMessages(prev => [...prev, greeting]);
+        }
+      } else {
+        console.warn("OpenClaw unreachable on startup.");
+      }
+    };
+    if (isAuthenticated) {
+      checkOpenClaw();
+    }
+  }, [isAuthenticated, activeChatId]); // Run when authenticated or chat changes
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -297,8 +386,20 @@ export default function App() {
       parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }]
     }));
 
-    // Call Gemini API
-    const bmoResponseText = await fetchGemini(currentInput, currentImage, formattedHistory);
+    // Call Target Brain
+    let bmoResponseText = "BMO COMPUTES COMMAND.";
+    if (activeBrain === 'gemini') {
+      bmoResponseText = await fetchGemini(currentInput, currentImage, formattedHistory);
+    } else {
+      // Show intermediate "Thinking" face/text if it takes long
+      setFace('O_O'); 
+      const result = await sendOpenClawCommand(currentInput, currentActiveMessages.slice(-6));
+      if (result) {
+        bmoResponseText = result;
+      } else {
+        bmoResponseText = "BMO is thinking very hard or cannot reach OpenClaw. Please check the local connection! ^_^;";
+      }
+    }
 
     setIsLoading(false);
     setIsHappy(true);
@@ -315,6 +416,15 @@ export default function App() {
     setMessages(prev => [...prev, bmoMsg]);
     playBmoVoice(bmoResponseText); // Trigger WASM local TTS
     setTimeout(() => setIsHappy(false), 2000);
+  };
+
+  const deleteLastMessage = () => {
+    setMessages(prev => {
+      const activeMessages = prev.filter(m => m.chatId === activeChatId && m.user === currentUser);
+      if (activeMessages.length === 0) return prev;
+      const lastMsgId = activeMessages[activeMessages.length - 1].id;
+      return prev.filter(m => m.id !== lastMsgId);
+    });
   };
 
   const generateAdventure = async () => {
@@ -527,14 +637,33 @@ export default function App() {
 
                     {/* Settings Toggle */}
                     <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0]">
-                       <div className="text-[8px] text-[#2d482e] mb-2 font-bold">IMAGE RENDERER</div>
+                       <div className="text-[8px] text-[#2d482e] mb-2 font-bold">SYSTEM PREFERENCES</div>
+                       
                        <button 
                           onClick={() => setUseCrtFilter(!useCrtFilter)}
-                          className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
+                          className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
                             useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'
                           }`}
                         >
                           BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}
+                        </button>
+
+                        <button 
+                          onClick={() => setActiveBrain('gemini')}
+                          className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
+                            activeBrain === 'gemini' ? 'bg-[#007aff] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
+                          }`}
+                        >
+                          🧠 GEM BMO (Cloud)
+                        </button>
+                        
+                        <button 
+                          onClick={() => setActiveBrain('openclaw')}
+                          className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
+                            activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
+                          }`}
+                        >
+                          🤖 LOCAL BMO (OpenClaw)
                         </button>
                     </div>
 
@@ -615,10 +744,10 @@ export default function App() {
             {/* Functional D-Pad */}
             <div className="grid grid-cols-3 grid-rows-3 w-[72px] h-[72px] sm:w-[84px] sm:h-[84px] gap-0">
               <div></div>
-              {/* UP - File Upload */}
+              {/* UP */}
               <button 
-                onClick={() => fileInputRef.current?.click()}
-                title="Add File"
+                onClick={() => {}}
+                title="Unused"
                 className="bg-[#ffcc00] rounded-t-md shadow-[0_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 flex items-center justify-center border-x-2 border-t-2 border-yellow-700 pb-1"
               >
                 <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-yellow-800"></div>
@@ -626,21 +755,35 @@ export default function App() {
               <div></div>
               
               {/* LEFT */}
-              <button className="bg-[#ffcc00] rounded-l-md shadow-[2px_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-y-2 border-l-2 border-yellow-700"></button>
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                title="Upload File"
+                className="bg-[#ffcc00] rounded-l-md shadow-[2px_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-y-2 border-l-2 border-yellow-700 flex items-center justify-center"
+              >
+                <div className="w-0 h-0 border-t-[6px] border-b-[6px] border-r-[8px] border-t-transparent border-b-transparent border-r-yellow-800"></div>
+              </button>
               {/* CENTER */}
               <div className="bg-[#e6b800] border-2 border-yellow-700 flex items-center justify-center">
                 <div className="w-3 h-3 bg-yellow-800 rounded-full opacity-50"></div>
               </div>
-              {/* RIGHT - Adventure Idea Generator ✨ */}
+              {/* RIGHT */}
               <button 
-                onClick={generateAdventure}
-                title="✨ Adventure Idea"
-                className="bg-[#ffcc00] rounded-r-md shadow-[2px_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-y-2 border-r-2 border-yellow-700 flex items-center justify-center text-[10px] sm:text-xs pb-1"
-              >✨</button>
+                onClick={() => handleSend()}
+                title="Send Message"
+                className="bg-[#ffcc00] rounded-r-md shadow-[2px_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-y-2 border-r-2 border-yellow-700 flex items-center justify-center pb-1"
+              >
+                <div className="w-0 h-0 border-t-[6px] border-b-[6px] border-l-[8px] border-t-transparent border-b-transparent border-l-yellow-800"></div>
+              </button>
               
               <div></div>
               {/* DOWN */}
-              <button className="bg-[#ffcc00] rounded-b-md shadow-[0_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-x-2 border-b-2 border-yellow-700"></button>
+              <button 
+                onClick={() => deleteLastMessage()}
+                title="Delete Last Message"
+                className="bg-[#ffcc00] rounded-b-md shadow-[0_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-x-2 border-b-2 border-yellow-700 flex items-center justify-center"
+              >
+                <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent border-t-yellow-800"></div>
+              </button>
               <div></div>
             </div>
             
