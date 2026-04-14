@@ -94,7 +94,12 @@ const parseToolCall = (text) => {
   if (!text || !text.trim().startsWith('{')) return null;
   try {
     const parsed = JSON.parse(text);
-    if (parsed && typeof parsed.tool === 'string') return parsed;
+    if (parsed && typeof parsed.tool === 'string') {
+      return {
+        tool: parsed.tool,
+        action: typeof parsed.action === 'string' ? parsed.action : null
+      };
+    }
   } catch {
     // not JSON
   }
@@ -229,28 +234,6 @@ export default function App() {
 
   const tts = useNativeTTS();
 
-  // --- Startup Self-Check (greeting only, history already loaded via handleAuth) ---
-  useEffect(() => {
-    const sendGreeting = async () => {
-      if (!activeChatId) return;
-      const result = await sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?");
-      if (result) {
-        const greeting = {
-          id: Date.now(),
-          chatId: activeChatId,
-          user: currentUser,
-          sender: 'bmo',
-          type: 'text',
-          text: result
-        };
-        setMessages(prev => [...prev, greeting]);
-      }
-    };
-    if (isAuthenticated && !isServerSleeping) {
-      sendGreeting();
-    }
-  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
@@ -314,20 +297,41 @@ export default function App() {
         setHistory(serverChats);
         setMessages(serverMessages);
         const userChats = serverChats.filter(h => h.user === user);
+        let resolvedChatId;
         if (userChats.length > 0) {
-          setActiveChatId(userChats[0].id);
+          resolvedChatId = userChats[0].id;
+          setActiveChatId(resolvedChatId);
         } else {
-          const newId = 1;
-          setHistory([{ id: newId, user: user, title: 'NEW SESSION' }]);
-          setActiveChatId(newId);
+          resolvedChatId = 1;
+          setHistory([{ id: resolvedChatId, user: user, title: 'NEW SESSION' }]);
+          setActiveChatId(resolvedChatId);
         }
+        setIsAuthenticated(true);
+        setIsServerSleeping(false);
+        // Send startup greeting (non-blocking)
+        sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?").then(result => {
+          if (result) {
+            setMessages(prev => [...prev, {
+              id: Date.now(), chatId: resolvedChatId, user, sender: 'bmo', type: 'text', text: result
+            }]);
+          }
+        });
       } else {
         // Server alive but no history endpoint — start fresh
-        setHistory([{ id: 1, user: user, title: 'NEW SESSION' }]);
-        setActiveChatId(1);
+        const resolvedChatId = 1;
+        setHistory([{ id: resolvedChatId, user: user, title: 'NEW SESSION' }]);
+        setActiveChatId(resolvedChatId);
+        setIsAuthenticated(true);
+        setIsServerSleeping(false);
+        // Send startup greeting (non-blocking)
+        sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?").then(result => {
+          if (result) {
+            setMessages(prev => [...prev, {
+              id: Date.now(), chatId: resolvedChatId, user, sender: 'bmo', type: 'text', text: result
+            }]);
+          }
+        });
       }
-      setIsAuthenticated(true);
-      setIsServerSleeping(false);
     } catch {
       // Server unreachable — show Asleep / No Tailscale state
       setIsAuthenticated(true);
