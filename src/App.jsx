@@ -5,12 +5,24 @@ import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon } from 
 const useNativeTTS = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [voices, setVoices] = useState([]);
+
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+    const synth = window.speechSynthesis;
+    const updateVoices = () => {
+      const available = synth.getVoices();
+      if (available.length > 0) setVoices(available);
+    };
+    updateVoices();
+    synth.addEventListener('voiceschanged', updateVoices);
+    return () => synth.removeEventListener('voiceschanged', updateVoices);
+  }, []);
 
   const getBmoVoice = useCallback(() => {
-    if (!window.speechSynthesis) return null;
-    const voices = window.speechSynthesis.getVoices();
+    if (voices.length === 0) return null;
     return voices.find(v => v.lang.startsWith('en-US')) || voices[0] || null;
-  }, []);
+  }, [voices]);
 
   const speak = useCallback((text, onEnd) => {
     if (!window.speechSynthesis) return;
@@ -165,12 +177,14 @@ const sendOpenClawCommand = async (command, history = [], image = null) => {
   }
 
   // Build user message content — vision array format when an image is provided
+  const normalizedCommand = typeof command === 'string' ? command.trim() : '';
+  const resolvedCommand = normalizedCommand || (image ? "Please analyze the attached image." : "Please help with my request.");
   const userContent = image
     ? [
-        { type: "text", text: command || "" },
+        { type: "text", text: resolvedCommand },
         { type: "image_url", image_url: { url: image } }
       ]
-    : command;
+    : resolvedCommand;
 
   // Map history to OpenAI format
   const messages = [
@@ -270,6 +284,8 @@ export default function App() {
 
   // --- Handlers ---
   const handleUserToggle = (user) => {
+    tts.stop();
+    setSpeakingMsgId(null);
     setCurrentUser(user);
     setIsAuthenticated(false);
     setIsServerSleeping(false);
@@ -333,9 +349,10 @@ export default function App() {
         });
       }
     } catch {
-      // Server unreachable — show Asleep / No Tailscale state
-      setIsAuthenticated(true);
+      // Server unreachable — show Asleep / No Tailscale state; do NOT authenticate
+      setIsAuthenticated(false);
       setIsServerSleeping(true);
+      setActiveChatId(null);
     }
   };
 
@@ -559,7 +576,20 @@ export default function App() {
               {/* MAIN SCREEN CONTENT */}
               <div className="flex-1 overflow-hidden flex flex-col relative">
                 
-                {!isAuthenticated ? (
+                {isServerSleeping ? (
+                  /* --- ASLEEP / NO TAILSCALE STATE --- */
+                  <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
+                    <div className="text-4xl mb-4">z_z</div>
+                    <p className="mb-2 leading-relaxed">ASLEEP...</p>
+                    <p className="mb-6 opacity-70 text-[8px] leading-relaxed">NO TAILSCALE DETECTED.<br/>CHECK VPN CONNECTION.</p>
+                    <button
+                      onClick={retryConnection}
+                      className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] hover:shadow-none transition-all"
+                    >
+                      RETRY CONNECTION
+                    </button>
+                  </div>
+                ) : !isAuthenticated ? (
                   /* --- LOCK SCREEN --- */
                   <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
                     <Lock size={48} className="mb-4 opacity-80" strokeWidth={2} />
@@ -573,19 +603,6 @@ export default function App() {
                         className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[#2d482e] p-3 rounded text-center placeholder:text-[#2d482e] placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#007aff] mb-4"
                       />
                     </form>
-                  </div>
-                ) : isServerSleeping ? (
-                  /* --- ASLEEP / NO TAILSCALE STATE --- */
-                  <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
-                    <div className="text-4xl mb-4">z_z</div>
-                    <p className="mb-2 leading-relaxed">ASLEEP...</p>
-                    <p className="mb-6 opacity-70 text-[8px] leading-relaxed">NO TAILSCALE DETECTED.<br/>CHECK VPN CONNECTION.</p>
-                    <button
-                      onClick={retryConnection}
-                      className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] hover:shadow-none transition-all"
-                    >
-                      RETRY CONNECTION
-                    </button>
                   </div>
                 ) : (
                   /* --- CHAT VIEW --- */
@@ -658,7 +675,7 @@ export default function App() {
                                     >⏸ PAUSE</button>
                                   )}
                                   <button
-                                    onClick={tts.stop}
+                                    onClick={() => { tts.stop(); setSpeakingMsgId(null); }}
                                     className="px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:brightness-110"
                                   >⏹ STOP</button>
                                 </div>
