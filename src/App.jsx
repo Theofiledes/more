@@ -1,54 +1,51 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon } from 'lucide-react';
-import * as tts from '@mintplex-labs/piper-tts-web';
 
-// --- Piper TTS WASM Initialization ---
-tts.PATH_MAP['bmo'] = 'bmo';
+// --- Native TTS Hook (replaces Piper WASM) ---
+const useNativeTTS = () => {
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
-// Intercept huggingface CDN to serve our local models
-const originalFetch = window.fetch;
-window.fetch = async (url, ...args) => {
-  if (typeof url === 'string') {
-    if (url === `${tts.HF_BASE}/bmo.json`) return originalFetch('./voices/bmo.onnx.json', ...args);
-    if (url === `${tts.HF_BASE}/bmo`) return originalFetch('./voices/bmo.onnx', ...args);
-  }
-  return originalFetch(url, ...args);
-};
+  const getBmoVoice = useCallback(() => {
+    if (!window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices();
+    return voices.find(v => v.lang.startsWith('en-US')) || voices[0] || null;
+  }, []);
 
-let globalTtsSession = null;
+  const speak = useCallback((text, onEnd) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.pitch = 1.4;
+    utterance.rate = 1.0;
+    const voice = getBmoVoice();
+    if (voice) utterance.voice = voice;
+    utterance.onstart = () => { setIsSpeaking(true); setIsPaused(false); };
+    utterance.onend = () => { setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
+    utterance.onerror = () => { setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
+    window.speechSynthesis.speak(utterance);
+  }, [getBmoVoice]);
 
-// Force Piper to use single-threaded WASM to bypass Vite Dev Server isolation limits
-const originalConcurrency = navigator.hardwareConcurrency;
-Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 1, configurable: true });
+  const pause = useCallback(() => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.pause();
+    setIsPaused(true);
+  }, []);
 
-// Initialize Piper off the main thread silently in the background
-tts.TtsSession.create({ 
-  voiceId: 'bmo',
-  wasmPaths: {
-    onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/',
-    piperData: `${tts.WASM_BASE}.data`,
-    piperWasm: `${tts.WASM_BASE}.wasm`
-  }
-})
-  .then(session => {
-    globalTtsSession = session;
-    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => originalConcurrency, configurable: true });
-  })
-  .catch(err => {
-    console.error("Piper WASM Initialization failed:", err);
-    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => originalConcurrency, configurable: true });
-  });
+  const resume = useCallback(() => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.resume();
+    setIsPaused(false);
+  }, []);
 
-const playBmoVoice = async (text) => {
-  if (!globalTtsSession) return;
-  try {
-    const audioBlob = await globalTtsSession.predict(text);
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-    audio.play();
-  } catch (e) {
-    console.error("Piper TTS Playback failed:", e);
-  }
+  const stop = useCallback(() => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+    setIsPaused(false);
+  }, []);
+
+  return { isSpeaking, isPaused, speak, pause, resume, stop };
 };
 
 // Insert Google Font & custom CRT styles globally
@@ -86,31 +83,23 @@ const fontStyle = `
   }
 `;
 
-// --- Mock Data & Config ---
+// --- Config ---
 const USERS = {
   Anthony: { pin: '1234' },
   Kayla: { pin: '4321' }
 };
 
-const MOCK_HISTORY = [
-  { id: 1, user: 'Anthony', title: 'VIDEO GAMES' },
-  { id: 2, user: 'Anthony', title: 'SKATEBOARDING' },
-  { id: 3, user: 'Kayla', title: 'SCIENCE STUFF' },
-];
-
-const MOCK_MESSAGES = [
-  { id: 1, chatId: 1, user: 'Anthony', sender: 'bmo', type: 'text', text: 'HELLO ANTHONY. I AM BMO!' },
-  { id: 2, chatId: 3, user: 'Kayla', sender: 'bmo', type: 'text', text: 'BMO CHOP! JUST KIDDING, HI KAYLA.' },
-];
-
-const BMO_RESPONSES = [
-  "WHO WANTS TO PLAY VIDEO GAMES?",
-  "I AM NOT A TOY. I AM A LITTLE LIVING BOY.",
-  "COMPUTING... YES.",
-  "THAT DOES NOT COMPUTE.",
-  "YAY! \\o/",
-  "BMO IS PROUD OF YOU.",
-];
+// Helper: detect if a BMO message contains a JSON tool call
+const parseToolCall = (text) => {
+  if (!text || !text.trim().startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.tool === 'string') return parsed;
+  } catch {
+    // not JSON
+  }
+  return null;
+};
 
 // --- Gemini API Helper ---
 const fetchGemini = async (prompt, base64Image = null, chatHistory = []) => {
@@ -162,21 +151,7 @@ const fetchGemini = async (prompt, base64Image = null, chatHistory = []) => {
 // --- End Gemini API Helper ---
 
 // --- OpenClaw API Helper ---
-const pingOpenClaw = async () => {
-  const apiUrl = import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789";
-  const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "";
-  try {
-    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/models`, {
-      method: "GET",
-      headers: { "Authorization": `Bearer ${apiToken}` }
-    });
-    return response.ok;
-  } catch (err) {
-    return false;
-  }
-};
-
-const sendOpenClawCommand = async (command, history = []) => {
+const sendOpenClawCommand = async (command, history = [], image = null) => {
   const apiUrl = import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789";
   const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "";
   
@@ -184,13 +159,21 @@ const sendOpenClawCommand = async (command, history = []) => {
     console.warn("No OpenClaw API token found in .env");
   }
 
+  // Build user message content — vision array format when an image is provided
+  const userContent = image
+    ? [
+        { type: "text", text: command || "" },
+        { type: "image_url", image_url: { url: image } }
+      ]
+    : command;
+
   // Map history to OpenAI format
   const messages = [
     ...history.map(m => ({
       role: m.sender === 'user' ? 'user' : 'assistant',
       content: m.text
     })),
-    { role: "user", content: command }
+    { role: "user", content: userContent }
   ];
 
   try {
@@ -224,15 +207,17 @@ const sendOpenClawCommand = async (command, history = []) => {
 export default function App() {
   const [currentUser, setCurrentUser] = useState('Anthony');
   const [isAuthenticated, setIsAuthenticated] = useState(false); // PIN lock state
+  const [isServerSleeping, setIsServerSleeping] = useState(false); // Tailscale / server down
   const [pinInput, setPinInput] = useState('');
   
-  const [messages, setMessages] = useState(MOCK_MESSAGES);
-  const [history, setHistory] = useState(MOCK_HISTORY);
-  const [activeChatId, setActiveChatId] = useState(1);
+  const [messages, setMessages] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [activeChatId, setActiveChatId] = useState(null);
   const [inputText, setInputText] = useState('');
   
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isEncoding, setIsEncoding] = useState(false); // FileReader in progress
   const [isHappy, setIsHappy] = useState(false);
   const [face, setFace] = useState('^_^');
   
@@ -240,32 +225,31 @@ export default function App() {
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
   const [useCrtFilter, setUseCrtFilter] = useState(true);
   const [activeBrain, setActiveBrain] = useState('openclaw'); // Default to openclaw
+  const [speakingMsgId, setSpeakingMsgId] = useState(null); // ID of the message being spoken
 
-  // --- Startup Self-Check ---
+  const tts = useNativeTTS();
+
+  // --- Startup Self-Check (greeting only, history already loaded via handleAuth) ---
   useEffect(() => {
-    const checkOpenClaw = async () => {
-      const isAlive = await pingOpenClaw();
-      if (isAlive) {
-        const result = await sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?");
-        if (result) {
-          const greeting = {
-            id: Date.now(),
-            chatId: activeChatId,
-            user: currentUser,
-            sender: 'bmo',
-            type: 'text',
-            text: result
-          };
-          setMessages(prev => [...prev, greeting]);
-        }
-      } else {
-        console.warn("OpenClaw unreachable on startup.");
+    const sendGreeting = async () => {
+      if (!activeChatId) return;
+      const result = await sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?");
+      if (result) {
+        const greeting = {
+          id: Date.now(),
+          chatId: activeChatId,
+          user: currentUser,
+          sender: 'bmo',
+          type: 'text',
+          text: result
+        };
+        setMessages(prev => [...prev, greeting]);
       }
     };
-    if (isAuthenticated) {
-      checkOpenClaw();
+    if (isAuthenticated && !isServerSleeping) {
+      sendGreeting();
     }
-  }, [isAuthenticated, activeChatId]); // Run when authenticated or chat changes
+  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -304,30 +288,67 @@ export default function App() {
   // --- Handlers ---
   const handleUserToggle = (user) => {
     setCurrentUser(user);
-    setIsAuthenticated(false); // Lock the account
+    setIsAuthenticated(false);
+    setIsServerSleeping(false);
     setPinInput('');
     setIsMenuOpen(false);
     setPendingFile(null);
     setPendingImageUrl(null);
+    setMessages([]);
+    setHistory([]);
+    setActiveChatId(null);
   };
 
-  const handleAuth = (e) => {
-    e.preventDefault();
-    if (pinInput === USERS[currentUser].pin) {
-      setIsAuthenticated(true);
-      setPinInput('');
-      
-      // Auto-select first chat or create new
-      const userHistory = history.filter(h => h.user === currentUser);
-      if (userHistory.length > 0) {
-        setActiveChatId(userHistory[0].id);
+  // Shared server handshake logic used by handleAuth and retryConnection
+  const performServerHandshake = async (user) => {
+    const apiUrl = (import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789").replace(/\/$/, "");
+    const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "";
+    try {
+      const response = await fetch(`${apiUrl}/v1/chat/history`, {
+        headers: { "Authorization": `Bearer ${apiToken}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const serverChats = Array.isArray(data.chats) ? data.chats : [];
+        const serverMessages = Array.isArray(data.messages) ? data.messages : [];
+        setHistory(serverChats);
+        setMessages(serverMessages);
+        const userChats = serverChats.filter(h => h.user === user);
+        if (userChats.length > 0) {
+          setActiveChatId(userChats[0].id);
+        } else {
+          const newId = 1;
+          setHistory([{ id: newId, user: user, title: 'NEW SESSION' }]);
+          setActiveChatId(newId);
+        }
       } else {
-        handleNewChat(currentUser);
+        // Server alive but no history endpoint — start fresh
+        setHistory([{ id: 1, user: user, title: 'NEW SESSION' }]);
+        setActiveChatId(1);
       }
-    } else {
+      setIsAuthenticated(true);
+      setIsServerSleeping(false);
+    } catch {
+      // Server unreachable — show Asleep / No Tailscale state
+      setIsAuthenticated(true);
+      setIsServerSleeping(true);
+    }
+  };
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    if (pinInput !== USERS[currentUser].pin) {
       alert("INCORRECT PIN.");
       setPinInput('');
+      return;
     }
+    setPinInput('');
+    await performServerHandshake(currentUser);
+  };
+
+  const retryConnection = async () => {
+    setIsServerSleeping(false);
+    await performServerHandshake(currentUser);
   };
 
   const handleNewChat = (userOverride = null) => {
@@ -391,9 +412,8 @@ export default function App() {
     if (activeBrain === 'gemini') {
       bmoResponseText = await fetchGemini(currentInput, currentImage, formattedHistory);
     } else {
-      // Show intermediate "Thinking" face/text if it takes long
-      setFace('O_O'); 
-      const result = await sendOpenClawCommand(currentInput, currentActiveMessages.slice(-6));
+      setFace('O_O');
+      const result = await sendOpenClawCommand(currentInput, currentActiveMessages.slice(-6), currentImage);
       if (result) {
         bmoResponseText = result;
       } else {
@@ -404,8 +424,9 @@ export default function App() {
     setIsLoading(false);
     setIsHappy(true);
     
+    const bmoMsgId = Date.now() + 1;
     const bmoMsg = {
-      id: Date.now() + 1,
+      id: bmoMsgId,
       chatId: activeChatId,
       user: currentUser,
       sender: 'bmo',
@@ -414,7 +435,13 @@ export default function App() {
     };
     
     setMessages(prev => [...prev, bmoMsg]);
-    playBmoVoice(bmoResponseText); // Trigger WASM local TTS
+
+    // Only speak if the response is not a tool call JSON
+    if (!parseToolCall(bmoResponseText)) {
+      setSpeakingMsgId(bmoMsgId);
+      tts.speak(bmoResponseText, () => setSpeakingMsgId(null));
+    }
+
     setTimeout(() => setIsHappy(false), 2000);
   };
 
@@ -437,8 +464,9 @@ export default function App() {
     setIsLoading(false);
     setIsHappy(true);
     
+    const bmoMsgId = Date.now();
     const bmoMsg = {
-      id: Date.now(),
+      id: bmoMsgId,
       chatId: activeChatId,
       user: currentUser,
       sender: 'bmo',
@@ -446,7 +474,12 @@ export default function App() {
       text: bmoResponseText
     };
     setMessages(prev => [...prev, bmoMsg]);
-    playBmoVoice(bmoResponseText); // Trigger WASM local TTS
+
+    if (!parseToolCall(bmoResponseText)) {
+      setSpeakingMsgId(bmoMsgId);
+      tts.speak(bmoResponseText, () => setSpeakingMsgId(null));
+    }
+
     setTimeout(() => setIsHappy(false), 2000);
   };
 
@@ -454,11 +487,14 @@ export default function App() {
     const file = e.target.files[0];
     if (file) {
       if (file.type.startsWith('image/')) {
+        setIsEncoding(true);
         const reader = new FileReader();
         reader.onloadend = () => {
-          setPendingImageUrl(reader.result); // Base64 string for Gemini
+          setPendingImageUrl(reader.result); // Base64 data URL for vision payload
           setPendingFile(null);
+          setIsEncoding(false);
         };
+        reader.onerror = () => setIsEncoding(false);
         reader.readAsDataURL(file);
       } else {
         setPendingFile(file);
@@ -532,9 +568,20 @@ export default function App() {
                         placeholder="ENTER PIN"
                         className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[#2d482e] p-3 rounded text-center placeholder:text-[#2d482e] placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#007aff] mb-4"
                       />
-                      {/* Hint for demo purposes */}
-                      <p className="text-[8px] opacity-60">Hint: {USERS[currentUser].pin}</p>
                     </form>
+                  </div>
+                ) : isServerSleeping ? (
+                  /* --- ASLEEP / NO TAILSCALE STATE --- */
+                  <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
+                    <div className="text-4xl mb-4">z_z</div>
+                    <p className="mb-2 leading-relaxed">ASLEEP...</p>
+                    <p className="mb-6 opacity-70 text-[8px] leading-relaxed">NO TAILSCALE DETECTED.<br/>CHECK VPN CONNECTION.</p>
+                    <button
+                      onClick={retryConnection}
+                      className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] hover:shadow-none transition-all"
+                    >
+                      RETRY CONNECTION
+                    </button>
                   </div>
                 ) : (
                   /* --- CHAT VIEW --- */
@@ -545,42 +592,76 @@ export default function App() {
                           NO MESSAGES YET.
                         </div>
                       ) : (
-                        activeMessages.map((msg) => (
-                          <div 
-                            key={msg.id} 
-                            className={`flex flex-col max-w-[85%] ${msg.sender === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
-                          >
+                        activeMessages.map((msg) => {
+                          const toolData = msg.sender === 'bmo' ? parseToolCall(msg.text) : null;
+                          return (
                             <div 
-                              className={`p-2 sm:p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] ${
-                                msg.sender === 'user' 
-                                  ? 'bg-[#cbe3c0] text-[#2d482e]' 
-                                  : 'bg-[#7ba068] text-white'
-                              }`}
+                              key={msg.id} 
+                              className={`flex flex-col max-w-[85%] ${msg.sender === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
                             >
-                              {/* File Rendering */}
-                              {msg.type === 'file' && (
-                                <div className="flex items-center gap-2 mb-1 p-2 bg-[#b5d6a7] border border-[#2d482e] rounded text-[8px] text-[#2d482e]">
-                                  <FileIcon size={12} />
-                                  <span className="truncate max-w-[100px]">{msg.fileName}</span>
+                              {toolData ? (
+                                /* --- Tool-Call Badge (Obj 4) --- */
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-900 border border-gray-600 text-green-400 text-[8px] font-mono shadow-[2px_2px_0_#000]">
+                                  <span>⚙️</span>
+                                  <span>Executing: <span className="text-green-300 font-bold">{toolData.tool}</span></span>
+                                  {toolData.action && <span className="opacity-60">→ {toolData.action}</span>}
+                                </div>
+                              ) : (
+                                <div 
+                                  className={`p-2 sm:p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] ${
+                                    msg.sender === 'user' 
+                                      ? 'bg-[#cbe3c0] text-[#2d482e]' 
+                                      : 'bg-[#7ba068] text-white'
+                                  }`}
+                                >
+                                  {/* File Rendering */}
+                                  {msg.type === 'file' && (
+                                    <div className="flex items-center gap-2 mb-1 p-2 bg-[#b5d6a7] border border-[#2d482e] rounded text-[8px] text-[#2d482e]">
+                                      <FileIcon size={12} />
+                                      <span className="truncate max-w-[100px]">{msg.fileName}</span>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Image Rendering */}
+                                  {msg.type === 'image' && (
+                                    <img 
+                                      src={msg.imageUrl} 
+                                      alt="User attachment" 
+                                      className={`max-w-full h-auto mb-2 ${useCrtFilter ? 'bmo-vision' : 'real-vision'}`}
+                                    />
+                                  )}
+                                  
+                                  {msg.text && <p style={{ wordBreak: 'break-word' }}>{msg.text}</p>}
                                 </div>
                               )}
-                              
-                              {/* Image Rendering */}
-                              {msg.type === 'image' && (
-                                <img 
-                                  src={msg.imageUrl} 
-                                  alt="User attachment" 
-                                  className={`max-w-full h-auto mb-2 ${useCrtFilter ? 'bmo-vision' : 'real-vision'}`}
-                                />
+
+                              <span className="text-[8px] text-[#2d482e] mt-1 opacity-70">
+                                {msg.sender === 'user' ? currentUser.toUpperCase() : 'BMO'}
+                              </span>
+
+                              {/* TTS Controls (Obj 1) — shown below the speaking BMO message */}
+                              {msg.sender === 'bmo' && !toolData && speakingMsgId === msg.id && (
+                                <div className="flex gap-2 mt-1">
+                                  {tts.isPaused ? (
+                                    <button
+                                      onClick={tts.resume}
+                                      className="px-2 py-1 text-[8px] bg-[#007aff] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:brightness-110"
+                                    >▶ PLAY</button>
+                                  ) : (
+                                    <button
+                                      onClick={tts.pause}
+                                      className="px-2 py-1 text-[8px] bg-[#ffcc00] text-[#2d482e] border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:brightness-110"
+                                    >⏸ PAUSE</button>
+                                  )}
+                                  <button
+                                    onClick={tts.stop}
+                                    className="px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:brightness-110"
+                                  >⏹ STOP</button>
+                                </div>
                               )}
-                              
-                              {msg.text && <p style={{ wordBreak: 'break-word' }}>{msg.text}</p>}
                             </div>
-                            <span className="text-[8px] text-[#2d482e] mt-1 opacity-70">
-                              {msg.sender === 'user' ? currentUser.toUpperCase() : 'BMO'}
-                            </span>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                       {isLoading && (
                         <div className="self-start p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white animate-pulse">
@@ -590,8 +671,15 @@ export default function App() {
                       <div ref={messagesEndRef} />
                     </div>
 
+                    {/* Encoding indicator (Obj 3) */}
+                    {isEncoding && (
+                      <div className="px-3 py-2 bg-[#2d482e] text-[#b5d6a7] text-[8px] text-center animate-pulse border-t-2 border-[#2d482e]">
+                        [ENCODING OPTICAL DATA...]
+                      </div>
+                    )}
+
                     {/* Pending Attachment Indicator */}
-                    {(pendingFile || pendingImageUrl) && (
+                    {!isEncoding && (pendingFile || pendingImageUrl) && (
                       <div className="px-3 py-2 bg-[#9fc28e] border-t-2 border-[#2d482e] flex items-center justify-between">
                          <div className="flex items-center gap-2 text-[#2d482e] text-[8px]">
                            {pendingImageUrl ? <ImageIcon size={12} /> : <FileIcon size={12} />}
