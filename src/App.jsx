@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon } from 'lucide-react';
+import TelemetryTerminal from './components/TelemetryTerminal';
+import ChatFeed from './components/ChatFeed';
+import HardwareControls from './components/HardwareControls';
+import Settings from './components/Settings';
+import Playbook from './components/Playbook';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 // --- Native TTS Hook (replaces Piper WASM) ---
 const useNativeTTS = () => {
@@ -238,6 +244,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isEncoding, setIsEncoding] = useState(false); // FileReader in progress
   const [isHappy, setIsHappy] = useState(false);
+  const [isEating, setIsEating] = useState(false); // Eating cartridge animation
   const [face, setFace] = useState('^_^');
   
   const [pendingFile, setPendingFile] = useState(null);
@@ -245,6 +252,10 @@ export default function App() {
   const [useCrtFilter, setUseCrtFilter] = useState(true);
   const [activeBrain, setActiveBrain] = useState('openclaw'); // Default to openclaw
   const [speakingMsgId, setSpeakingMsgId] = useState(null); // ID of the message being spoken
+  
+  // Dashboard states (Loop 4)
+  const [threshold, setThreshold] = useState(2);
+  const [safetyStride, setSafetyStride] = useState(true);
 
   const tts = useNativeTTS();
 
@@ -261,6 +272,12 @@ export default function App() {
     if (isHappy) {
       setFace('\\o/');
       return;
+    }
+    if (isEating) {
+      setFace('>_<');
+      const swallow = setTimeout(() => setFace('~_~'), 500);
+      const finish = setTimeout(() => setIsEating(false), 1500);
+      return () => { clearTimeout(swallow); clearTimeout(finish); };
     }
 
     setFace('^_^');
@@ -348,8 +365,10 @@ export default function App() {
           }
         });
       }
-    } catch {
+    } catch (e) {
       // Server unreachable — show Asleep / No Tailscale state; do NOT authenticate
+      console.error("Handshake failed:", e);
+      alert("CONNECTION FAILED: " + e.message);
       setIsAuthenticated(false);
       setIsServerSleeping(true);
       setActiveChatId(null);
@@ -514,12 +533,14 @@ export default function App() {
           setPendingImageUrl(reader.result); // Base64 data URL for vision payload
           setPendingFile(null);
           setIsEncoding(false);
+          setIsEating(true); // TRIGGER EATING
         };
         reader.onerror = () => setIsEncoding(false);
         reader.readAsDataURL(file);
       } else {
         setPendingFile(file);
         setPendingImageUrl(null);
+        setIsEating(true); // TRIGGER EATING
       }
     }
     e.target.value = null;
@@ -540,382 +561,293 @@ export default function App() {
   const activeMessages = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
   const activeHistory = history.filter(h => h.user === currentUser);
 
+  const onStopTTS = () => {
+    tts.stop();
+    setSpeakingMsgId(null);
+    // Emit SIGINT to backend via a temporary WebSocket or shared state
+    // For this pass, we'll just log it. (In Loop 5, this will be wired to the main WS)
+    console.log("PTT Triggered: Emitting SIGINT signal");
+  };
+
   return (
     <>
       <style>{fontStyle}</style>
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-2 sm:p-4 font-sans selection:bg-[#2d482e] selection:text-[#b5d6a7]">
         
-        {/* BMO Body */}
-        <div className="bg-[#5acbb5] w-full max-w-md h-[95vh] min-h-[650px] rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
+        {/* Responsive Dual Pane Container */}
+        <div className="w-full max-w-md lg:max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6 items-start h-[95vh]">
           
-          {/* Top Vents */}
-          <div className="flex justify-center mb-3">
-            <div className="w-16 h-2 bg-[#2d482e] rounded-full opacity-50"></div>
-          </div>
-
-          {/* Screen Bezel (Expanded to maximize screen) */}
-          <div className="bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden">
+          {/* LEFT PANE: BMO Body */}
+          <div className="bg-[#5acbb5] w-full h-full rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
             
-            {/* Actual Screen - Tighter green color */}
-            <div className="bg-[#b5d6a7] w-full h-full rounded-[12px] flex flex-col overflow-hidden relative border-4 border-[#2d482e] bmo-font text-[10px] sm:text-xs">
+            {/* Top Vents */}
+            <div className="flex justify-center mb-3">
+              <div className="w-16 h-2 bg-[#2d482e] rounded-full opacity-50"></div>
+            </div>
+
+            {/* Screen Bezel (Expanded to maximize screen) */}
+            <div className="bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden">
               
-              {/* Header */}
-              <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
-                <button 
-                  onClick={() => setIsMenuOpen(true)}
-                  className="text-[#2d482e] hover:text-[#007aff] transition-colors"
-                >
-                  <Menu size={20} strokeWidth={3} />
-                </button>
-                <div className="text-lg sm:text-xl font-bold tracking-widest text-[#2d482e]">
-                  {face}
-                </div>
-                <div className="w-5"></div>
-              </header>
-
-              {/* MAIN SCREEN CONTENT */}
-              <div className="flex-1 overflow-hidden flex flex-col relative">
+              {/* Actual Screen - Tighter green color */}
+              <div className="bg-[#b5d6a7] w-full h-full rounded-[12px] flex flex-col overflow-hidden relative border-4 border-[#2d482e] bmo-font text-[10px] sm:text-xs">
                 
-                {isServerSleeping ? (
-                  /* --- ASLEEP / NO TAILSCALE STATE --- */
-                  <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
-                    <div className="text-4xl mb-4">z_z</div>
-                    <p className="mb-2 leading-relaxed">ASLEEP...</p>
-                    <p className="mb-6 opacity-70 text-[8px] leading-relaxed">NO TAILSCALE DETECTED.<br/>CHECK VPN CONNECTION.</p>
-                    <button
-                      onClick={retryConnection}
-                      className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] hover:shadow-none transition-all"
-                    >
-                      RETRY CONNECTION
-                    </button>
+                {/* Header */}
+                <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
+                  <button 
+                    onClick={() => setIsMenuOpen(true)}
+                    className="text-[#2d482e] hover:text-[#007aff] transition-colors"
+                  >
+                    <Menu size={20} strokeWidth={3} />
+                  </button>
+                  <div className="text-lg sm:text-xl font-bold tracking-widest text-[#2d482e]">
+                    {face}
                   </div>
-                ) : !isAuthenticated ? (
-                  /* --- LOCK SCREEN --- */
-                  <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
-                    <Lock size={48} className="mb-4 opacity-80" strokeWidth={2} />
-                    <h2 className="mb-6 leading-relaxed">SECURE CONNECTION:<br/>{currentUser.toUpperCase()}</h2>
-                    <form onSubmit={handleAuth} className="w-full max-w-[200px]">
-                      <input 
-                        type="password"
-                        value={pinInput}
-                        onChange={(e) => setPinInput(e.target.value)}
-                        placeholder="ENTER PIN"
-                        className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[#2d482e] p-3 rounded text-center placeholder:text-[#2d482e] placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#007aff] mb-4"
+                  <div className="w-5"></div>
+                </header>
+
+                {/* MAIN SCREEN CONTENT */}
+                <div className="flex-1 overflow-hidden flex flex-col relative">
+                  
+                  {isServerSleeping ? (
+                    /* --- ASLEEP / NO TAILSCALE STATE --- */
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
+                      <div className="text-4xl mb-4">z_z</div>
+                      <p className="mb-2 leading-relaxed">ASLEEP...</p>
+                      <p className="mb-6 opacity-70 text-[8px] leading-relaxed">NO TAILSCALE DETECTED.<br/>CHECK VPN CONNECTION.</p>
+                      <button
+                        onClick={retryConnection}
+                        className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] hover:shadow-none transition-all"
+                      >
+                        RETRY CONNECTION
+                      </button>
+                    </div>
+                  ) : !isAuthenticated ? (
+                    /* --- LOCK SCREEN --- */
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
+                      <Lock size={48} className="mb-4 opacity-80" strokeWidth={2} />
+                      <h2 className="mb-6 leading-relaxed">SECURE CONNECTION:<br/>{currentUser.toUpperCase()}</h2>
+                      <form onSubmit={handleAuth} className="w-full max-w-[200px]">
+                        <input 
+                          type="password"
+                          value={pinInput}
+                          onChange={(e) => setPinInput(e.target.value)}
+                          placeholder="ENTER PIN"
+                          className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[#2d482e] p-3 rounded text-center placeholder:text-[#2d482e] placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#007aff] mb-4"
+                        />
+                      </form>
+                    </div>
+                  ) : (
+                    /* --- CHAT VIEW --- */
+                    <>
+                      <ChatFeed 
+                        messages={activeMessages}
+                        currentUser={currentUser}
+                        activeChatId={activeChatId}
+                        useCrtFilter={useCrtFilter}
+                        tts={tts}
+                        speakingMsgId={speakingMsgId}
+                        setSpeakingMsgId={setSpeakingMsgId}
                       />
-                    </form>
-                  </div>
-                ) : (
-                  /* --- CHAT VIEW --- */
-                  <>
-                    <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
-                      {activeMessages.length === 0 ? (
-                        <div className="text-center text-[#2d482e] opacity-50 mt-10">
-                          NO MESSAGES YET.
-                        </div>
-                      ) : (
-                        activeMessages.map((msg) => {
-                          const toolData = msg.sender === 'bmo' ? parseToolCall(msg.text) : null;
-                          return (
-                            <div 
-                              key={msg.id} 
-                              className={`flex flex-col max-w-[85%] ${msg.sender === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
-                            >
-                              {toolData ? (
-                                /* --- Tool-Call Badge (Obj 4) --- */
-                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-900 border border-gray-600 text-green-400 text-[8px] font-mono shadow-[2px_2px_0_#000]">
-                                  <span>⚙️</span>
-                                  <span>Executing: <span className="text-green-300 font-bold">{toolData.tool}</span></span>
-                                  {toolData.action && <span className="opacity-60">→ {toolData.action}</span>}
-                                </div>
-                              ) : (
-                                <div 
-                                  className={`p-2 sm:p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] ${
-                                    msg.sender === 'user' 
-                                      ? 'bg-[#cbe3c0] text-[#2d482e]' 
-                                      : 'bg-[#7ba068] text-white'
-                                  }`}
-                                >
-                                  {/* File Rendering */}
-                                  {msg.type === 'file' && (
-                                    <div className="flex items-center gap-2 mb-1 p-2 bg-[#b5d6a7] border border-[#2d482e] rounded text-[8px] text-[#2d482e]">
-                                      <FileIcon size={12} />
-                                      <span className="truncate max-w-[100px]">{msg.fileName}</span>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Image Rendering */}
-                                  {msg.type === 'image' && (
-                                    <img 
-                                      src={msg.imageUrl} 
-                                      alt="User attachment" 
-                                      className={`max-w-full h-auto mb-2 ${useCrtFilter ? 'bmo-vision' : 'real-vision'}`}
-                                    />
-                                  )}
-                                  
-                                  {msg.text && <p style={{ wordBreak: 'break-word' }}>{msg.text}</p>}
-                                </div>
-                              )}
 
-                              <span className="text-[8px] text-[#2d482e] mt-1 opacity-70">
-                                {msg.sender === 'user' ? currentUser.toUpperCase() : 'BMO'}
-                              </span>
-
-                              {/* TTS Controls (Obj 1) — shown below the speaking BMO message */}
-                              {msg.sender === 'bmo' && !toolData && speakingMsgId === msg.id && (
-                                <div className="flex gap-2 mt-1">
-                                  {tts.isPaused ? (
-                                    <button
-                                      onClick={tts.resume}
-                                      className="px-2 py-1 text-[8px] bg-[#007aff] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:brightness-110"
-                                    >▶ PLAY</button>
-                                  ) : (
-                                    <button
-                                      onClick={tts.pause}
-                                      className="px-2 py-1 text-[8px] bg-[#ffcc00] text-[#2d482e] border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:brightness-110"
-                                    >⏸ PAUSE</button>
-                                  )}
-                                  <button
-                                    onClick={() => { tts.stop(); setSpeakingMsgId(null); }}
-                                    className="px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:brightness-110"
-                                  >⏹ STOP</button>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      )}
                       {isLoading && (
-                        <div className="self-start p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white animate-pulse">
+                        <div className="self-start p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white animate-pulse mx-3 mb-2">
                           ...
                         </div>
                       )}
                       <div ref={messagesEndRef} />
-                    </div>
 
-                    {/* Encoding indicator (Obj 3) */}
-                    {isEncoding && (
-                      <div className="px-3 py-2 bg-[#2d482e] text-[#b5d6a7] text-[8px] text-center animate-pulse border-t-2 border-[#2d482e]">
-                        [ENCODING OPTICAL DATA...]
+                      {/* Encoding indicator (Obj 3) */}
+
+                      {isEncoding && (
+                        <div className="px-3 py-2 bg-[#2d482e] text-[#b5d6a7] text-[8px] text-center animate-pulse border-t-2 border-[#2d482e]">
+                          [ENCODING OPTICAL DATA...]
+                        </div>
+                      )}
+
+                      {/* Pending Attachment Indicator */}
+                      {!isEncoding && (pendingFile || pendingImageUrl) && (
+                        <div className="px-3 py-2 bg-[#9fc28e] border-t-2 border-[#2d482e] flex items-center justify-between">
+                           <div className="flex items-center gap-2 text-[#2d482e] text-[8px]">
+                             {pendingImageUrl ? <ImageIcon size={12} /> : <FileIcon size={12} />}
+                             <span className="truncate max-w-[120px]">
+                               {pendingImageUrl ? 'IMAGE READY' : pendingFile.name}
+                             </span>
+                           </div>
+                           <button 
+                             onClick={() => { setPendingFile(null); setPendingImageUrl(null); }} 
+                             className="text-[#ff3b30]"
+                           >
+                             <X size={14} strokeWidth={3}/>
+                           </button>
+                        </div>
+                      )}
+
+                      {/* Input Area (Text Only Now - Buttons Moved to Hardware) */}
+                      <div className="border-t-4 border-[#2d482e] bg-[#9fc28e] p-2">
+                        <textarea
+                          value={inputText}
+                          onChange={(e) => setInputText(e.target.value)}
+                          onKeyDown={handleKeyDown}
+                          placeholder="> TYPE..."
+                          className="w-full bg-[#b5d6a7] border-2 border-[#2d482e] text-[#2d482e] p-2 rounded resize-none placeholder:text-[#2d482e] placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#007aff]"
+                          rows={2}
+                        />
                       </div>
-                    )}
+                    </>
+                  )}
+                </div>
 
-                    {/* Pending Attachment Indicator */}
-                    {!isEncoding && (pendingFile || pendingImageUrl) && (
-                      <div className="px-3 py-2 bg-[#9fc28e] border-t-2 border-[#2d482e] flex items-center justify-between">
-                         <div className="flex items-center gap-2 text-[#2d482e] text-[8px]">
-                           {pendingImageUrl ? <ImageIcon size={12} /> : <FileIcon size={12} />}
-                           <span className="truncate max-w-[120px]">
-                             {pendingImageUrl ? 'IMAGE READY' : pendingFile.name}
-                           </span>
-                         </div>
+                {/* Slide-out Menu Overlay */}
+                {isMenuOpen && (
+                  <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex">
+                    <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
+                      
+                      <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]">
+                        <span className="font-bold text-[#2d482e]">SYSTEM</span>
+                        <button onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]">
+                          <X size={20} strokeWidth={3} />
+                        </button>
+                      </div>
+
+                      {/* Settings Toggle */}
+                      <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0]">
+                         <div className="text-[8px] text-[#2d482e] mb-2 font-bold">SYSTEM PREFERENCES</div>
+                         
                          <button 
-                           onClick={() => { setPendingFile(null); setPendingImageUrl(null); }} 
-                           className="text-[#ff3b30]"
-                         >
-                           <X size={14} strokeWidth={3}/>
-                         </button>
-                      </div>
-                    )}
+                            onClick={() => setUseCrtFilter(!useCrtFilter)}
+                            className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
+                              useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'
+                            }`}
+                          >
+                            BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}
+                          </button>
 
-                    {/* Input Area (Text Only Now - Buttons Moved to Hardware) */}
-                    <div className="border-t-4 border-[#2d482e] bg-[#9fc28e] p-2">
-                      <textarea
-                        value={inputText}
-                        onChange={(e) => setInputText(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="> TYPE..."
-                        className="w-full bg-[#b5d6a7] border-2 border-[#2d482e] text-[#2d482e] p-2 rounded resize-none placeholder:text-[#2d482e] placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#007aff]"
-                        rows={2}
-                      />
+                          <button 
+                            onClick={() => setActiveBrain('gemini')}
+                            className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
+                              activeBrain === 'gemini' ? 'bg-[#007aff] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
+                            }`}
+                          >
+                            🧠 GEM BMO (Cloud)
+                          </button>
+                          
+                          <button 
+                            onClick={() => setActiveBrain('openclaw')}
+                            className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
+                              activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
+                            }`}
+                          >
+                            🤖 LOCAL BMO (OpenClaw)
+                          </button>
+                      </div>
+
+                      {/* Profile Toggle (Multi-Tenant) */}
+                      <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
+                        <div className="text-[8px] text-white mb-2 flex items-center gap-2 font-bold">
+                          <User size={12} /> ACCOUNTS
+                        </div>
+                        <div className="flex flex-col gap-2 text-xs">
+                          {Object.keys(USERS).map(user => (
+                            <button
+                              key={user}
+                              onClick={() => handleUserToggle(user)}
+                              className={`p-2 rounded border-2 border-[#2d482e] text-left transition-colors ${
+                                currentUser === user 
+                                  ? 'bg-[#007aff] text-white shadow-[2px_2px_0_#2d482e]' 
+                                  : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
+                              }`}
+                            >
+                              {user.toUpperCase()} {currentUser === user && isAuthenticated ? '(UNLOCKED)' : ''}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Chat History */}
+                      {isAuthenticated && (
+                        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
+                          <button 
+                            onClick={() => handleNewChat()}
+                            className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 hover:translate-y-[2px] hover:shadow-none transition-all mb-2"
+                          >
+                            <Plus size={16} strokeWidth={3} /> NEW CHAT
+                          </button>
+
+                          <div className="text-[8px] text-[#2d482e] mb-1 mt-2">HISTORY</div>
+                          {activeHistory.map(chat => (
+                            <button
+                              key={chat.id}
+                              onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }}
+                              className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] transition-colors ${
+                                activeChatId === chat.id 
+                                  ? 'bg-[#9fc28e] text-[#2d482e]' 
+                                  : 'bg-[#cbe3c0] text-[#2d482e] hover:bg-[#b5d6a7]'
+                              }`}
+                            >
+                              {'>'} {chat.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </>
+                    <div className="flex-1 cursor-pointer" onClick={() => setIsMenuOpen(false)}></div>
+                  </div>
                 )}
               </div>
-
-              {/* Slide-out Menu Overlay */}
-              {isMenuOpen && (
-                <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex">
-                  <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
-                    
-                    <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]">
-                      <span className="font-bold text-[#2d482e]">SYSTEM</span>
-                      <button onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]">
-                        <X size={20} strokeWidth={3} />
-                      </button>
-                    </div>
-
-                    {/* Settings Toggle */}
-                    <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0]">
-                       <div className="text-[8px] text-[#2d482e] mb-2 font-bold">SYSTEM PREFERENCES</div>
-                       
-                       <button 
-                          onClick={() => setUseCrtFilter(!useCrtFilter)}
-                          className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
-                            useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'
-                          }`}
-                        >
-                          BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}
-                        </button>
-
-                        <button 
-                          onClick={() => setActiveBrain('gemini')}
-                          className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
-                            activeBrain === 'gemini' ? 'bg-[#007aff] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
-                          }`}
-                        >
-                          🧠 GEM BMO (Cloud)
-                        </button>
-                        
-                        <button 
-                          onClick={() => setActiveBrain('openclaw')}
-                          className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
-                            activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
-                          }`}
-                        >
-                          🤖 LOCAL BMO (OpenClaw)
-                        </button>
-                    </div>
-
-                    {/* Profile Toggle (Multi-Tenant) */}
-                    <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
-                      <div className="text-[8px] text-white mb-2 flex items-center gap-2 font-bold">
-                        <User size={12} /> ACCOUNTS
-                      </div>
-                      <div className="flex flex-col gap-2 text-xs">
-                        {Object.keys(USERS).map(user => (
-                          <button
-                            key={user}
-                            onClick={() => handleUserToggle(user)}
-                            className={`p-2 rounded border-2 border-[#2d482e] text-left transition-colors ${
-                              currentUser === user 
-                                ? 'bg-[#007aff] text-white shadow-[2px_2px_0_#2d482e]' 
-                                : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
-                            }`}
-                          >
-                            {user.toUpperCase()} {currentUser === user && isAuthenticated ? '(UNLOCKED)' : ''}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Chat History */}
-                    {isAuthenticated && (
-                      <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-                        <button 
-                          onClick={() => handleNewChat()}
-                          className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 hover:translate-y-[2px] hover:shadow-none transition-all mb-2"
-                        >
-                          <Plus size={16} strokeWidth={3} /> NEW CHAT
-                        </button>
-
-                        <div className="text-[8px] text-[#2d482e] mb-1 mt-2">HISTORY</div>
-                        {activeHistory.map(chat => (
-                          <button
-                            key={chat.id}
-                            onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }}
-                            className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] transition-colors ${
-                              activeChatId === chat.id 
-                                ? 'bg-[#9fc28e] text-[#2d482e]' 
-                                : 'bg-[#cbe3c0] text-[#2d482e] hover:bg-[#b5d6a7]'
-                            }`}
-                          >
-                            {'>'} {chat.title}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 cursor-pointer" onClick={() => setIsMenuOpen(false)}></div>
-                </div>
-              )}
             </div>
+
+            {/* Hidden Inputs triggered by Physical Buttons */}
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              className="hidden" 
+              onChange={handleFileSelect}
+            />
+            <input 
+              type="file" 
+              accept="image/*"
+              capture="environment"
+              ref={cameraInputRef} 
+              className="hidden" 
+              onChange={handleFileSelect}
+            />
+
+            {/* BMO Physical Buttons (Now Functional!) */}
+            <HardwareControls 
+              onSend={handleSend}
+              onUploadFile={() => fileInputRef.current?.click()}
+              onOpenCamera={() => cameraInputRef.current?.click()}
+              onDeleteLast={deleteLastMessage}
+              onStopTTS={() => { tts.stop(); setSpeakingMsgId(null); }}
+            />
           </div>
 
-          {/* Hidden Inputs triggered by Physical Buttons */}
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            className="hidden" 
-            onChange={handleFileSelect}
-          />
-          <input 
-            type="file" 
-            accept="image/*"
-            capture="environment"
-            ref={cameraInputRef} 
-            className="hidden" 
-            onChange={handleFileSelect}
-          />
-
-          {/* BMO Physical Buttons (Now Functional!) */}
-          <div className="h-28 mt-4 flex justify-between items-center px-2 sm:px-6">
-            
-            {/* Functional D-Pad */}
-            <div className="grid grid-cols-3 grid-rows-3 w-[72px] h-[72px] sm:w-[84px] sm:h-[84px] gap-0">
-              <div></div>
-              {/* UP */}
-              <button 
-                onClick={() => {}}
-                title="Unused"
-                className="bg-[#ffcc00] rounded-t-md shadow-[0_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 flex items-center justify-center border-x-2 border-t-2 border-yellow-700 pb-1"
-              >
-                <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-yellow-800"></div>
-              </button>
-              <div></div>
-              
-              {/* LEFT */}
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                title="Upload File"
-                className="bg-[#ffcc00] rounded-l-md shadow-[2px_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-y-2 border-l-2 border-yellow-700 flex items-center justify-center"
-              >
-                <div className="w-0 h-0 border-t-[6px] border-b-[6px] border-r-[8px] border-t-transparent border-b-transparent border-r-yellow-800"></div>
-              </button>
-              {/* CENTER */}
-              <div className="bg-[#e6b800] border-2 border-yellow-700 flex items-center justify-center">
-                <div className="w-3 h-3 bg-yellow-800 rounded-full opacity-50"></div>
-              </div>
-              {/* RIGHT */}
-              <button 
-                onClick={() => handleSend()}
-                title="Send Message"
-                className="bg-[#ffcc00] rounded-r-md shadow-[2px_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-y-2 border-r-2 border-yellow-700 flex items-center justify-center pb-1"
-              >
-                <div className="w-0 h-0 border-t-[6px] border-b-[6px] border-l-[8px] border-t-transparent border-b-transparent border-l-yellow-800"></div>
-              </button>
-              
-              <div></div>
-              {/* DOWN */}
-              <button 
-                onClick={() => deleteLastMessage()}
-                title="Delete Last Message"
-                className="bg-[#ffcc00] rounded-b-md shadow-[0_4px_0_rgba(0,0,0,0.2)] active:translate-y-1 hover:brightness-110 border-x-2 border-b-2 border-yellow-700 flex items-center justify-center"
-              >
-                <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-t-[8px] border-l-transparent border-r-transparent border-t-yellow-800"></div>
-              </button>
-              <div></div>
+          {/* RIGHT PANE: Telemetry Dashboard & Controls */}
+          <div className="hidden lg:flex flex-col h-full overflow-hidden gap-4">
+            <div className="flex-[2] min-h-0">
+              <TelemetryTerminal />
             </div>
             
-            {/* Action Buttons */}
-            <div className="flex gap-4 sm:gap-6 transform -rotate-12 translate-y-2">
-              {/* Green Button: Camera / Image Upload */}
-              <button 
-                onClick={() => cameraInputRef.current?.click()}
-                title="Camera / Add Photo"
-                className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#34c759] shadow-[0_6px_0_#1e7b36] border-2 border-[#1e7b36] active:translate-y-[6px] active:shadow-none hover:brightness-110 transition-all flex items-center justify-center mt-6"
-              >
-                 <span className="font-bold text-[#1e7b36] text-xs">A</span>
-              </button>
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+              <Settings 
+                threshold={threshold} 
+                setThreshold={setThreshold} 
+                safetyStride={safetyStride} 
+                setSafetyStride={setSafetyStride} 
+              />
               
-              {/* Red Button: Send Message */}
-              <button 
-                onClick={handleSend}
-                disabled={isLoading}
-                title="Send Message"
-                className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#ff3b30] shadow-[0_6px_0_#99231d] border-2 border-[#99231d] active:translate-y-[6px] active:shadow-none hover:brightness-110 disabled:opacity-50 transition-all flex items-center justify-center"
-              >
-                 <span className="font-bold text-[#99231d] text-xs">B</span>
-              </button>
+              <Playbook onRunMacro={(prompt) => {
+                setInputText(prompt);
+                // We could auto-send here too if preferred
+              }} />
+
+              {/* Legend / Info below terminal */}
+              <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px]">
+                <div className="flex justify-between items-center">
+                  <span>SYSTEM STATUS: OPERATIONAL</span>
+                  <span>PIXEL_FOLD_V2</span>
+                </div>
+              </div>
             </div>
           </div>
 
