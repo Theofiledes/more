@@ -138,7 +138,7 @@ app.add_middleware(
 )
 
 # Configuration
-OPENCLAW_URL = "http://openclaw:18789"
+OPENCLAW_URL = "http://172.18.0.3:18789" # Use direct internal IP (Loop 6 fix)
 API_TOKEN = "bmo-secret-key-2026"
 HISTORY_FILE = "history.json"
 
