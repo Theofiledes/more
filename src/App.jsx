@@ -5,6 +5,7 @@ import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
 import Settings from './components/Settings';
 import Playbook from './components/Playbook';
+import WorkspaceEditor from './components/WorkspaceEditor';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 // --- Native TTS Hook (replaces Piper WASM) ---
@@ -173,18 +174,31 @@ const fetchGemini = async (prompt, base64Image = null, chatHistory = []) => {
 
 // --- End Gemini API Helper ---
 
-// --- OpenClaw API Helper ---
-const sendOpenClawCommand = async (command, history = [], image = null) => {
-  const apiUrl = import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789";
-  const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "";
-  
-  if (!apiToken) {
-    console.warn("No OpenClaw API token found in .env");
+// --- Helper to get dynamic API URL ---
+const getApiUrl = () => {
+  // Priority 1: If we're on localhost in browser, use localhost backend
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    return "http://localhost:18789";
   }
 
+  // Priority 2: Use .env if provided
+  const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+  if (envUrl) return envUrl.replace(/\/$/, "");
+  
+  return "http://100.84.254.37:18789";
+};
+
+const getApiToken = () => import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
+
+// --- OpenClaw API Helper ---
+const sendOpenClawCommand = async (command, history = [], image = null) => {
+  const apiUrl = getApiUrl();
+  const apiToken = getApiToken();
+  
   // Build user message content — vision array format when an image is provided
   const normalizedCommand = typeof command === 'string' ? command.trim() : '';
   const resolvedCommand = normalizedCommand || (image ? "Please analyze the attached image." : "Please help with my request.");
+  
   const userContent = image
     ? [
         { type: "text", text: resolvedCommand },
@@ -198,15 +212,14 @@ const sendOpenClawCommand = async (command, history = [], image = null) => {
       role: m.sender === 'user' ? 'user' : 'assistant',
       content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
     })),
-    { role: 'user', content: command }
+    { role: 'user', content: userContent }
   ];
-
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute client-side timeout
 
-    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/v1/chat/completions`, {
+    const response = await fetch(`${apiUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
@@ -220,12 +233,11 @@ const sendOpenClawCommand = async (command, history = [], image = null) => {
     });
     
     clearTimeout(timeoutId);
-    
     if (!response.ok) throw new Error(`OpenClaw error! status: ${response.status}`);
     const data = await response.json();
     return data.choices?.[0]?.message?.content || null;
-  } catch (err) {
-    console.error("OpenClaw command failed:", err);
+  } catch (error) {
+    console.error("OpenClaw command failed:", error);
     return null;
   }
 };
@@ -264,6 +276,7 @@ export default function App() {
   // Dashboard states (Loop 4)
   const [threshold, setThreshold] = useState(2);
   const [safetyStride, setSafetyStride] = useState(true);
+  const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry'); // 'telemetry' or 'editor'
 
   const tts = useNativeTTS();
 
@@ -325,8 +338,8 @@ export default function App() {
 
   // Shared server handshake logic used by handleAuth and retryConnection
   const performServerHandshake = async (user) => {
-    const apiUrl = (import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789").replace(/\/$/, "");
-    const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "";
+    const apiUrl = getApiUrl();
+    const apiToken = getApiToken();
     try {
       const response = await fetch(`${apiUrl}/v1/chat/history`, {
         headers: { "Authorization": `Bearer ${apiToken}` }
@@ -335,35 +348,32 @@ export default function App() {
         const data = await response.json();
         const serverChats = Array.isArray(data.chats) ? data.chats : [];
         const serverMessages = Array.isArray(data.messages) ? data.messages : [];
-        setHistory(serverChats);
-        setMessages(serverMessages);
+        
+        // Only update history if local is empty, or merge carefully
+        setHistory(prev => prev.length > 0 ? prev : serverChats);
+        setMessages(prev => prev.length > 0 ? prev : serverMessages);
+
         const userChats = serverChats.filter(h => h.user === user);
         let resolvedChatId;
         if (userChats.length > 0) {
-          resolvedChatId = userChats[0].id;
+          resolvedChatId = activeChatId || userChats[0].id;
           setActiveChatId(resolvedChatId);
         } else {
-          resolvedChatId = 1;
-          setHistory([{ id: resolvedChatId, user: user, title: 'NEW SESSION' }]);
+          resolvedChatId = activeChatId || 1;
+          if (history.length === 0) setHistory([{ id: resolvedChatId, user: user, title: 'NEW SESSION' }]);
           setActiveChatId(resolvedChatId);
         }
         setIsAuthenticated(true);
         setIsServerSleeping(false);
-        // Send startup greeting (non-blocking)
-        sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?").then(result => {
-          if (result) {
-            setMessages(prev => [...prev, {
-              id: Date.now(), chatId: resolvedChatId, user, sender: 'bmo', type: 'text', text: result
-            }]);
-          }
-        });
       } else {
         // Server alive but no history endpoint — start fresh
         setIsAuthenticated(true);
         setIsServerSleeping(false);
-        const resolvedChatId = 1;
-        setHistory([{ id: resolvedChatId, user: user, title: 'NEW SESSION' }]);
-        setActiveChatId(resolvedChatId);
+        if (!activeChatId) {
+          const resolvedChatId = 1;
+          setHistory([{ id: resolvedChatId, user: user, title: 'NEW SESSION' }]);
+          setActiveChatId(resolvedChatId);
+        }
       }
     } catch (e) {
       // Server unreachable — show "Asleep" face
@@ -842,8 +852,31 @@ export default function App() {
 
           {/* RIGHT PANE: Telemetry Dashboard & Controls */}
           <div className="hidden lg:flex flex-col h-full overflow-hidden gap-4">
+            
+            {/* Dashboard Tabs */}
+            <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg">
+              <button
+                type="button"
+                onClick={() => setActiveDashboardTab('telemetry')}
+                className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${
+                  activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7] hover:bg-[#1a2e1d]'
+                }`}
+              >TELEMETRY</button>
+              <button
+                type="button"
+                onClick={() => setActiveDashboardTab('editor')}
+                className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${
+                  activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7] hover:bg-[#1a2e1d]'
+                }`}
+              >BRAIN_EDITOR</button>
+            </div>
+
             <div className="flex-[2] min-h-0">
-              <TelemetryTerminal />
+              {activeDashboardTab === 'telemetry' ? (
+                <TelemetryTerminal />
+              ) : (
+                <WorkspaceEditor />
+              )}
             </div>
             
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">

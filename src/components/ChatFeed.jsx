@@ -5,7 +5,7 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
   const [expandedToolId, setExpandedToolId] = useState(null);
 
   const parseToolCall = (text) => {
-    if (!text || !text.trim().startsWith('{')) return null;
+    if (!text || typeof text !== 'string' || !text.trim().startsWith('{')) return null;
     try {
       const parsed = JSON.parse(text);
       // Logic for tool_call format from loop directives

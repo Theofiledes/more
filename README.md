@@ -36,15 +36,11 @@ Host: `http://localhost:5173` (Vite Dev) | `http://localhost:18789` (Backend)
 - [x] **Loop 5:** Async Git Sandbox (Auto-checkpoints before execution).
 - [x] **Loop 6:** Local RAG Memory (SQLite-based fact injection).
 
----
-
-## 🚀 Upcoming: Phase 3 (Workspace Editor)
-*Target: Direct manipulation of BMO's "Brain" files.*
-
-- [ ] **File Navigator:** UI to switch between `SOUL.md`, `AGENTS.md`, and `MEMORY.md`.
-- [ ] **Live Editor:** Integration of a code editor (or styled textarea) using `GET/PUT /v1/workspace`.
-- [ ] **Sync Indicator:** Visual "Saved" state when writing to the Docker workspace.
-- [ ] **Hot-Reload Brain:** Button to signal OpenClaw to reload configuration after edits.
+### Phase 3: Workspace Editor
+- [x] **File Navigator:** UI to switch between `SOUL.md`, `AGENTS.md`, and `MEMORY.md`.
+- [x] **Live Editor:** Integration of a code editor (styled textarea) using `GET/PUT /v1/workspace`.
+- [x] **Sync Indicator:** Visual "Saved" state when writing to the Docker workspace.
+- [x] **Hot-Reload Brain:** Signal OpenClaw to reload configuration (via backend proxy).
 
 ---
 
