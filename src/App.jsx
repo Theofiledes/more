@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal } from 'lucide-react';
+import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2 } from 'lucide-react';
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
@@ -19,6 +19,7 @@ const useNativeTTS = () => {
     const synth = window.speechSynthesis;
     const updateVoices = () => {
       const available = synth.getVoices();
+      console.log("TTS_DEBUG: Voices found:", available.length);
       if (available.length > 0) setVoices(available);
     };
     updateVoices();
@@ -33,8 +34,6 @@ const useNativeTTS = () => {
 
   const speak = useCallback((text, onEnd) => {
     if (!window.speechSynthesis || typeof text !== 'string') return;
-    
-    // PRIME: Cancel any hanging audio
     window.speechSynthesis.cancel();
     
     const utterance = new SpeechSynthesisUtterance(text);
@@ -45,9 +44,9 @@ const useNativeTTS = () => {
     const voice = getBmoVoice();
     if (voice) utterance.voice = voice;
     
-    utterance.onstart = () => { setIsSpeaking(true); setIsPaused(false); };
-    utterance.onend = () => { setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
-    utterance.onerror = () => { setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
+    utterance.onstart = () => { console.log("TTS_DEBUG: Started"); setIsSpeaking(true); setIsPaused(false); };
+    utterance.onend = () => { console.log("TTS_DEBUG: Ended"); setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
+    utterance.onerror = (e) => { console.error("TTS_DEBUG: Error", e); setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
     
     window.speechSynthesis.speak(utterance);
   }, [getBmoVoice]);
@@ -64,19 +63,8 @@ const useNativeTTS = () => {
 
 const fontStyle = `
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Gaegu:wght@700&display=swap');
-  
   .bmo-font { font-family: 'Press Start 2P', cursive; line-height: 1.4; }
-  
-  /* Hand-drawn Label Font */
-  .label-font { 
-    font-family: 'Gaegu', cursive; 
-    color: black;
-    font-weight: 900;
-    font-size: 14px;
-    letter-spacing: 1px;
-    text-shadow: 0.5px 0.5px 0px rgba(255,255,255,0.5);
-  }
-
+  .label-font { font-family: 'Gaegu', cursive; color: #2d482e; font-weight: 900; font-size: 10px; opacity: 0.8; }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: #b5d6a7; border-left: 1px solid #2d482e; }
   ::-webkit-scrollbar-thumb { background: #2d482e; }
@@ -124,14 +112,27 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState('Anthony');
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
   const [isServerSleeping, setIsServerSleeping] = useState(false);
+  
   useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
   
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => {
+    const saved = localStorage.getItem('bmo_messages');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => { localStorage.setItem('bmo_messages', JSON.stringify(messages)); }, [messages]);
+
+  const [inputText, setInputText] = useState(() => localStorage.getItem('bmo_input_buffer') || '');
+  useEffect(() => { localStorage.setItem('bmo_input_buffer', inputText); }, [inputText]);
+
   const [history, setHistory] = useState([]);
-  const [activeChatId, setActiveChatId] = useState(null);
-  const [inputText, setInputText] = useState('');
-  
+  const [activeChatId, setActiveChatId] = useState(() => {
+    const saved = localStorage.getItem('bmo_active_chat_id');
+    return saved ? parseInt(saved) : null;
+  });
+  useEffect(() => { if (activeChatId) localStorage.setItem('bmo_active_chat_id', activeChatId); }, [activeChatId]);
+
   const [isLoading, setIsLoading] = useState(false);
+  const [isEncoding, setIsEncoding] = useState(false);
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
   const [face, setFace] = useState('^_^');
@@ -149,7 +150,6 @@ export default function App() {
   const [isDashboardOverlayOpen, setIsDashboardOverlayOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isEncoding, setIsEncoding] = useState(false);
 
   const tts = useNativeTTS();
 
@@ -176,7 +176,20 @@ export default function App() {
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
 
-  const handleUserToggle = (user) => { setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); setSpeakingMsgId(null); setCurrentUser(user); setIsServerSleeping(false); setPinInput(''); setIsMenuOpen(false); setMessages([]); setHistory([]); setActiveChatId(null); };
+  const handleUserToggle = (user) => { 
+    setIsAuthenticated(false); 
+    localStorage.removeItem('bmo_authenticated'); 
+    localStorage.removeItem('bmo_messages');
+    localStorage.removeItem('bmo_input_buffer');
+    setSpeakingMsgId(null); 
+    setCurrentUser(user); 
+    setIsServerSleeping(false); 
+    setPinInput(''); 
+    setIsMenuOpen(false); 
+    setMessages([]); 
+    setHistory([]); 
+    setActiveChatId(null); 
+  };
 
   const performServerHandshake = async (user) => {
     const apiUrl = getApiUrl();
@@ -185,14 +198,13 @@ export default function App() {
       const response = await fetch(`${apiUrl}/v1/chat/history`, { headers: { "Authorization": `Bearer ${apiToken}` } });
       if (response.ok) {
         const data = await response.json();
-        setHistory(prev => prev.length > 0 ? prev : (data.chats || []));
-        setMessages(prev => prev.length > 0 ? prev : (data.messages || []));
+        setHistory(data.chats || []);
+        if (messages.length === 0) setMessages(data.messages || []);
         const userChats = (data.chats || []).filter(h => h.user === user);
         let rid = activeChatId || (userChats.length > 0 ? userChats[0].id : 1);
-        if (history.length === 0 && userChats.length === 0) setHistory([{ id: rid, user: user, title: 'NEW SESSION' }]);
         setActiveChatId(rid); setIsAuthenticated(true); setIsServerSleeping(false);
-      } else { setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) { const rid = 1; setHistory([{ id: rid, user: user, title: 'NEW SESSION' }]); setActiveChatId(rid); } }
-    } catch (e) { setIsServerSleeping(true); if (history.length === 0) { const fid = 1; setHistory([{ id: fid, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(fid); } }
+      } else { setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) setActiveChatId(1); }
+    } catch (e) { console.error("Handshake failed:", e); setIsServerSleeping(true); if (history.length === 0) { const fid = 1; setHistory([{ id: fid, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(fid); } }
   };
 
   const handleAuth = async (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } if (pinInput !== USERS[currentUser].pin) { alert("INCORRECT PIN."); setPinInput(''); return; } setPinInput(''); await performServerHandshake(currentUser); };
@@ -204,7 +216,7 @@ export default function App() {
     const newId = Math.max(0, ...history.map(h => h.id)) + 1;
     setHistory([{ id: newId, user: user, title: 'NEW SESSION' }, ...history]);
     setActiveChatId(newId);
-    setMessages([...messages, { id: Date.now(), chatId: newId, user: user, sender: 'bmo', type: 'text', text: `GREETINGS ${user.toUpperCase()}.` }]);
+    setMessages([{ id: Date.now(), chatId: newId, user: user, sender: 'bmo', type: 'text', text: `GREETINGS ${user.toUpperCase()}.` }]);
     setIsMenuOpen(false);
   };
 
@@ -252,6 +264,7 @@ export default function App() {
       <style>{fontStyle}</style>
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-2 sm:p-4 font-sans selection:bg-[#2d482e] selection:text-[#b5d6a7]">
         <div className="w-full max-w-md lg:max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6 items-start h-[95vh]">
+          {/* BMO LEFT PANE */}
           <div className="bg-[#5acbb5] w-full h-full rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
             <div className="flex justify-center mb-3"><div className="w-16 h-2 bg-[#2d482e] rounded-full opacity-50"></div></div>
             <div className="bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden">
@@ -292,23 +305,22 @@ export default function App() {
                     </>
                   )}
                 </div>
+                {/* MENU OVERLAY */}
                 {isMenuOpen && (
-                  <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex">
+                  <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex animate-in fade-in duration-200">
                     <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]"><span className="font-bold text-[#2d482e]">SYSTEM</span><button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button></div>
-                      <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0]">
-                         <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase">Preferences</div>
+                      <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
+                         <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
                          <button type="button" onClick={() => { tts.speak("BMO IS AWAKE!"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2">🔊 WAKE AUDIO</button>
-                         <button type="button" onClick={() => setIsDashboardOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2">🎮 BMO DASHBOARD</button>
-                         <button type="button" onClick={() => setIsTerminalOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2">📟 SYSTEM TERMINAL</button>
+                         <button type="button" onClick={() => { tts.speak("HEARTBEAT OK"); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-purple-600 text-white flex items-center justify-center gap-2">🩺 DEBUG AUDIO</button>
+                         <button type="button" onClick={() => { setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold">🎮 BMO DASHBOARD</button>
+                         <button type="button" onClick={() => { setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold">📟 SYSTEM TERMINAL</button>
                          <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
                          <button type="button" onClick={() => setActiveBrain('openclaw')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white' : 'bg-[#b5d6a7]'}`}>🤖 LOCAL BMO</button>
                       </div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
-                        <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold">
-                          <div className="flex items-center gap-2"><User size={12} /> ACCOUNTS</div>
-                          <button type="button" onClick={() => { setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); }} className="bg-[#ff3b30] px-1 rounded text-[6px] border border-[#2d482e]">LOGOUT</button>
-                        </div>
+                        <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold uppercase">Accounts</div>
                         <div className="flex flex-col gap-2 text-xs">
                           {Object.keys(USERS).map(user => (
                             <button key={user} type="button" onClick={() => handleUserToggle(user)} className={`p-2 rounded border-2 border-[#2d482e] text-left ${currentUser === user ? 'bg-[#007aff] text-white' : 'bg-[#b5d6a7]'}`}>{user.toUpperCase()}</button>
@@ -317,8 +329,7 @@ export default function App() {
                       </div>
                       {isAuthenticated && (
                         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-                          <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-2"><Plus size={16} /> NEW CHAT</button>
-                          <div className="text-[8px] text-[#2d482e] mb-1 mt-2 font-bold uppercase tracking-widest">History</div>
+                          <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-2 font-bold"><Plus size={16} /> NEW CHAT</button>
                           {activeHistory.map(chat => (
                             <button key={chat.id} type="button" onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] ${activeChatId === chat.id ? 'bg-[#9fc28e]' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
                           ))}
@@ -330,42 +341,45 @@ export default function App() {
                 )}
               </div>
             </div>
-            {/* Hand-drawn Button Labels */}
-            <div className="relative">
-              <div className="absolute -top-4 left-4 label-font transform -rotate-12">UPLOAD</div>
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2 label-font">PTT</div>
-              <div className="absolute -top-4 right-4 label-font transform rotate-12">SEND</div>
-              <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
-              <div className="absolute bottom-2 right-12 label-font transform rotate-12">ACTION</div>
+            {/* LABELS & HARDWARE */}
+            <div className="h-28 mt-4 flex justify-between items-center px-2 sm:px-6 relative">
+               <div className="absolute -top-4 left-6 label-font transform -rotate-12 pointer-events-none font-black text-black">UPLOAD</div>
+               <div className="absolute -top-4 left-1/2 -translate-x-1/2 label-font pointer-events-none font-black text-black">PTT</div>
+               <div className="absolute -top-4 right-10 label-font transform rotate-12 pointer-events-none font-black text-black">SEND</div>
+               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
+               <div className="absolute bottom-2 right-12 label-font transform rotate-12 pointer-events-none font-black text-black">ACTION</div>
             </div>
           </div>
+          {/* DASHBOARD RIGHT PANE (Desktop Only) */}
           <div className="hidden lg:flex flex-col h-full overflow-hidden gap-4">
             <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg">
-              <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
-              <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
+              <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
+              <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
             </div>
             <div className="flex-[2] min-h-0">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
               <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} />
               <Playbook onRunMacro={(prompt) => { setInputText(prompt); }} />
-              <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center">
+              <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center shadow-lg">
                 <span>SYSTEM STATUS: OPERATIONAL</span><span>PIXEL_FOLD_V2</span>
               </div>
             </div>
           </div>
         </div>
+
+        {/* OVERLAYS for small screens */}
         {isDashboardOverlayOpen && (
-          <div className="fixed inset-0 bg-[#5acbb5] z-[100] flex flex-col p-4 animate-in slide-in-from-bottom duration-300 overflow-y-auto">
-            <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#5acbb5] py-2 z-10">
+          <div className="fixed inset-0 bg-[#5acbb5] z-[100] flex flex-col p-4 animate-in slide-in-from-bottom duration-300 overflow-y-auto border-t-8 border-[#2d482e]">
+            <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#5acbb5] py-2 z-10 border-b-4 border-[#2d482e]">
               <div className="text-[#2d482e] bmo-font text-xs flex items-center gap-2">⚙️ DASHBOARD_OVERLAY</div>
-              <button type="button" onClick={() => setIsDashboardOverlayOpen(false)} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-[#2d482e] bmo-font text-[10px] shadow-[2px_2px_0_#2d482e]">CLOSE</button>
+              <button type="button" onClick={() => setIsDashboardOverlayOpen(false)} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-[#2d482e] bmo-font text-[10px] shadow-[2px_2px_0_#2d482e] active:translate-y-[1px]">CLOSE</button>
             </div>
             <div className="flex flex-col gap-4">
-               <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg">
-                <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
-                <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
+               <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg shadow-inner">
+                <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
+                <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
               </div>
-              <div className="h-[300px]">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
+              <div className="h-[300px] border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-2xl">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
               <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} />
               <Playbook onRunMacro={(prompt) => { setInputText(prompt); setIsDashboardOverlayOpen(false); }} />
             </div>
@@ -373,11 +387,11 @@ export default function App() {
         )}
         {isTerminalOverlayOpen && (
           <div className="fixed inset-0 bg-black z-[100] flex flex-col p-4 animate-in fade-in duration-300">
-            <div className="flex justify-between items-center mb-4 text-[#b5d6a7] bmo-font text-xs">
+            <div className="flex justify-between items-center mb-4 text-[#b5d6a7] bmo-font text-xs border-b border-[#b5d6a7] pb-2">
               <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>LIVE_TELEMETRY</div>
-              <button type="button" onClick={() => setIsTerminalOverlayOpen(false)} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-white bmo-font text-[10px] shadow-[2px_2px_0_white]">EXIT</button>
+              <button type="button" onClick={() => setIsTerminalOverlayOpen(false)} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-white bmo-font text-[10px] shadow-[2px_2px_0_white] active:translate-y-[1px]">EXIT</button>
             </div>
-            <div className="flex-1 overflow-hidden"><TelemetryTerminal /></div>
+            <div className="flex-1 overflow-hidden border-2 border-[#b5d6a7] rounded-lg shadow-inner"><TelemetryTerminal /></div>
           </div>
         )}
       </div>
