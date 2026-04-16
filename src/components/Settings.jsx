@@ -48,6 +48,7 @@ const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride }) =>
           <span className="text-[6px] opacity-60">MANUAL PR APPROVAL</span>
         </div>
         <button 
+          type="button"
           onClick={() => setSafetyStride(!safetyStride)}
           className={`w-12 h-6 rounded-full border-2 border-[#2d482e] transition-all relative ${safetyStride ? 'bg-[#ffcc00]' : 'bg-gray-400'}`}
         >

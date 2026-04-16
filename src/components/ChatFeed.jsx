@@ -37,12 +37,14 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
       </div>
       <div className="flex gap-2">
         <button 
+          type="button"
           onClick={onApprove}
           className="flex-1 py-2 bg-green-600 text-white rounded border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] font-bold text-[8px] active:translate-y-[1px] active:shadow-none transition-all uppercase"
         >
           [APPROVE & MERGE]
         </button>
         <button 
+          type="button"
           onClick={onReject}
           className="flex-1 py-2 bg-red-600 text-white rounded border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] font-bold text-[8px] active:translate-y-[1px] active:shadow-none transition-all uppercase"
         >
@@ -92,6 +94,7 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                 /* --- Loop 2: Interactive Tool Trace Badge --- */
                 <div className="flex flex-col gap-1 w-full">
                   <button 
+                    type="button"
                     onClick={() => setExpandedToolId(expandedToolId === msg.id ? null : msg.id)}
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-[#2d482e] text-white text-[8px] font-mono shadow-[2px_2px_0_#2d482e] transition-all active:translate-y-[1px] active:shadow-none ${getStatusColor(toolData.status)}`}
                   >
@@ -138,11 +141,16 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                   
                   {/* Image Rendering */}
                   {msg.type === 'image' && (
-                    <img 
-                      src={msg.imageUrl} 
-                      alt="User attachment" 
-                      className={`max-w-full h-auto mb-2 ${useCrtFilter ? 'bmo-vision' : 'real-vision'}`}
-                    />
+                    <div className="relative overflow-hidden rounded-lg mb-2">
+                      <img 
+                        src={msg.imageUrl} 
+                        alt="User attachment" 
+                        className={`max-w-full h-auto ${useCrtFilter ? 'bmo-vision' : 'real-vision'}`}
+                      />
+                      {useCrtFilter && (
+                        <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(255,0,0,0.03),rgba(0,255,0,0.01),rgba(0,0,255,0.03))] bg-[length:100%_2px,3px_100%]"></div>
+                      )}
+                    </div>
                   )}
                   
                   {msg.text && <p className="leading-relaxed" style={{ wordBreak: 'break-word' }}>{msg.text}</p>}
@@ -158,6 +166,7 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                 <div className="flex gap-2 mt-1">
                   {tts.isPaused ? (
                     <button
+                      type="button"
                       onClick={tts.resume}
                       className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#007aff] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
                     >
@@ -165,6 +174,7 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                     </button>
                   ) : (
                     <button
+                      type="button"
                       onClick={tts.pause}
                       className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ffcc00] text-[#2d482e] border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
                     >
@@ -172,6 +182,7 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                     </button>
                   )}
                   <button
+                    type="button"
                     onClick={() => { tts.stop(); setSpeakingMsgId(null); }}
                     className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
                   >

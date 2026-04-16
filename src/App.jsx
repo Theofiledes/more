@@ -31,7 +31,7 @@ const useNativeTTS = () => {
   }, [voices]);
 
   const speak = useCallback((text, onEnd) => {
-    if (!window.speechSynthesis) return;
+    if (!window.speechSynthesis || typeof text !== 'string') return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.pitch = 1.4;
@@ -196,10 +196,11 @@ const sendOpenClawCommand = async (command, history = [], image = null) => {
   const messages = [
     ...history.map(m => ({
       role: m.sender === 'user' ? 'user' : 'assistant',
-      content: m.text
+      content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
     })),
-    { role: "user", content: userContent }
+    { role: 'user', content: command }
   ];
+
 
   try {
     const controller = new AbortController();
@@ -231,8 +232,15 @@ const sendOpenClawCommand = async (command, history = [], image = null) => {
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState('Anthony');
-  const [isAuthenticated, setIsAuthenticated] = useState(false); // PIN lock state
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('bmo_authenticated') === 'true';
+  });
   const [isServerSleeping, setIsServerSleeping] = useState(false); // Tailscale / server down
+  
+  // Update localStorage when auth changes
+  useEffect(() => {
+    localStorage.setItem('bmo_authenticated', isAuthenticated);
+  }, [isAuthenticated]);
   const [pinInput, setPinInput] = useState('');
   
   const [messages, setMessages] = useState([]);
@@ -351,32 +359,32 @@ export default function App() {
         });
       } else {
         // Server alive but no history endpoint — start fresh
+        setIsAuthenticated(true);
+        setIsServerSleeping(false);
         const resolvedChatId = 1;
         setHistory([{ id: resolvedChatId, user: user, title: 'NEW SESSION' }]);
         setActiveChatId(resolvedChatId);
-        setIsAuthenticated(true);
-        setIsServerSleeping(false);
-        // Send startup greeting (non-blocking)
-        sendOpenClawCommand("HELLO BMO! ARE YOU ONLINE?").then(result => {
-          if (result) {
-            setMessages(prev => [...prev, {
-              id: Date.now(), chatId: resolvedChatId, user, sender: 'bmo', type: 'text', text: result
-            }]);
-          }
-        });
       }
     } catch (e) {
-      // Server unreachable — show Asleep / No Tailscale state; do NOT authenticate
+      // Server unreachable — show "Asleep" face
       console.error("Handshake failed:", e);
-      alert("CONNECTION FAILED: " + e.message);
-      setIsAuthenticated(false);
       setIsServerSleeping(true);
-      setActiveChatId(null);
+      
+      // CRITICAL FIX: Do NOT set isAuthenticated(false) here. 
+      // If we were already authenticated, stay authenticated so we don't get kicked to the PIN screen.
+      if (history.length === 0) {
+        const fallbackId = 1;
+        setHistory([{ id: fallbackId, user: user, title: 'OFFLINE_MODE' }]);
+        setActiveChatId(fallbackId);
+      }
     }
   };
 
   const handleAuth = async (e) => {
-    e.preventDefault();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (pinInput !== USERS[currentUser].pin) {
       alert("INCORRECT PIN.");
       setPinInput('');
@@ -594,6 +602,7 @@ export default function App() {
                 {/* Header */}
                 <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
                   <button 
+                    type="button"
                     onClick={() => setIsMenuOpen(true)}
                     className="text-[#2d482e] hover:text-[#007aff] transition-colors"
                   >
@@ -626,15 +635,16 @@ export default function App() {
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
                       <Lock size={48} className="mb-4 opacity-80" strokeWidth={2} />
                       <h2 className="mb-6 leading-relaxed">SECURE CONNECTION:<br/>{currentUser.toUpperCase()}</h2>
-                      <form onSubmit={handleAuth} className="w-full max-w-[200px]">
+                      <div className="w-full max-w-[200px]">
                         <input 
                           type="password"
                           value={pinInput}
                           onChange={(e) => setPinInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleAuth(e)}
                           placeholder="ENTER PIN"
                           className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[#2d482e] p-3 rounded text-center placeholder:text-[#2d482e] placeholder:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#007aff] mb-4"
                         />
-                      </form>
+                      </div>
                     </div>
                   ) : (
                     /* --- CHAT VIEW --- */
@@ -743,13 +753,19 @@ export default function App() {
 
                       {/* Profile Toggle (Multi-Tenant) */}
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
-                        <div className="text-[8px] text-white mb-2 flex items-center gap-2 font-bold">
-                          <User size={12} /> ACCOUNTS
+                        <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold">
+                          <div className="flex items-center gap-2"><User size={12} /> ACCOUNTS</div>
+                          <button 
+                            type="button"
+                            onClick={() => { setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); }}
+                            className="bg-[#ff3b30] px-1 rounded text-[6px] border border-[#2d482e]"
+                          >LOGOUT</button>
                         </div>
                         <div className="flex flex-col gap-2 text-xs">
                           {Object.keys(USERS).map(user => (
                             <button
                               key={user}
+                              type="button"
                               onClick={() => handleUserToggle(user)}
                               className={`p-2 rounded border-2 border-[#2d482e] text-left transition-colors ${
                                 currentUser === user 
@@ -767,6 +783,7 @@ export default function App() {
                       {isAuthenticated && (
                         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
                           <button 
+                            type="button"
                             onClick={() => handleNewChat()}
                             className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 hover:translate-y-[2px] hover:shadow-none transition-all mb-2"
                           >
@@ -777,6 +794,7 @@ export default function App() {
                           {activeHistory.map(chat => (
                             <button
                               key={chat.id}
+                              type="button"
                               onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }}
                               className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] transition-colors ${
                                 activeChatId === chat.id 

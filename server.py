@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, HTTPException, Depends, status, WebSocket,
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Union
+from pydantic import BaseModel
 from git import Repo
 from memory_manager import memory_manager
 
@@ -96,6 +97,16 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Background heartbeat task (Loop 6 fix)
+async def start_heartbeat():
+    while True:
+        await asyncio.sleep(10)
+        await broadcast_to_managers("\u001b[35m[HEARTBEAT] KERNEL IS ALIVE\u001b[0m")
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(start_heartbeat())
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -128,19 +139,25 @@ def save_history(history):
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2)
 
+# Track telemetry in a global buffer for HTTP polling
+telemetry_buffer = []
+
+async def broadcast_to_managers(message: str):
+    telemetry_buffer.append(message)
+    if len(telemetry_buffer) > 1000:
+        telemetry_buffer.pop(0)
+    await manager.broadcast(message)
+
+@app.get("/v1/telemetry")
+async def get_telemetry_poll(token: str = Depends(get_token)):
+    return {"lines": telemetry_buffer}
+
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
-        # For this pass, we'll tail the openclaw log file
-        # The log filename has a date, so we need to find it or use a glob
-        log_dir = "/home/node/.openclaw/logs"
-        
-        # In this simplistic version, we'll just send a boot message
         await websocket.send_text("\u001b[32m[BMO_OS] TELEMETRY SUBSYSTEM ONLINE\u001b[0m")
-        await websocket.send_text("\u001b[36m[BMO_OS] LISTENING FOR OPENCLAW KERNEL EVENTS...\u001b[0m")
         
-        # Listen for messages from client (Loop 3: SIGINT)
         async def listen_for_commands():
             try:
                 while True:
@@ -148,29 +165,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     try:
                         msg = json.loads(data)
                         if msg.get("command") == "SIGINT":
-                            print("RECEIVED SIGINT FROM APP - STOPPING GENERATION")
                             if executor.kill():
-                                await manager.broadcast("\u001b[31m[KERNEL] INTERRUPT SIGNAL RECEIVED - PROCESS KILLED\u001b[0m")
-                            else:
-                                await manager.broadcast("\u001b[33m[KERNEL] SIGINT RECEIVED BUT NO ACTIVE PROCESS\u001b[0m")
-                        
+                                await broadcast_to_managers("\u001b[31m[KERNEL] INTERRUPT SIGNAL RECEIVED - PROCESS KILLED\u001b[0m")
                         if msg.get("command") == "test_run":
-                            asyncio.create_task(executor.run_command("ls -R /app", manager.broadcast))
-                    except:
-                        pass
-            except:
-                pass
+                            asyncio.create_task(executor.run_command("ls -R /app", broadcast_to_managers))
+                    except: pass
+            except: pass
 
         asyncio.create_task(listen_for_commands())
 
-        # Heartbeat broadcast for testing
         while True:
             await asyncio.sleep(10)
-            await manager.broadcast("\u001b[35m[HEARTBEAT] KERNEL IS ALIVE\u001b[0m")
+            await broadcast_to_managers("\u001b[35m[HEARTBEAT] KERNEL IS ALIVE\u001b[0m")
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        print(f"Websocket error: {e}")
         manager.disconnect(websocket)
 
 @app.get("/v1/chat/history")

@@ -1,16 +1,55 @@
-# React + Vite
+# 🎮 BMO App: Ultimate Battle Plan
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Current Status: **Phase 2 Complete / Testing Active**
+Host: `http://localhost:5173` (Vite Dev) | `http://localhost:18789` (Backend)
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🧪 Testing Protocol: "Touch Every Button"
+*Use this list to verify the current build in the browser or on the device.*
 
-## React Compiler
+- [ ] **Dual-Pane Layout:** Responsive check (>1024px) shows Chat + Dashboard side-by-side.
+- [ ] **Secure Auth:** Enter PIN `1234` to unlock the chat.
+- [ ] **Brain Swap:** Toggle between `GEM BMO` (Cloud) and `LOCAL BMO` (OpenClaw).
+- [ ] **Chat Engine:** Send a text message and verify the response.
+- [ ] **Tool Badges:** Verify JSON tool calls render as badges with expandable STDOUT.
+- [ ] **Cartridge Animation:** Select a file and verify the "eating" face + Cartridge bubble.
+- [ ] **Tactile Audio:** Click & Hold the center D-Pad button (PTT) to trigger recording state.
+- [ ] **Telemetry Feed:** Verify the Right Pane is polling and displaying system heartbeats.
+- [ ] **Macro Grid:** Click "ANDROID DEBUG" and verify the prompt fills the input field.
+- [ ] **Haptics:** (Mobile Only) Verify vibration on button presses.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## ✅ Completed Phases
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### Phase 1: The Hotfixes
+- [x] Implemented `/v1/chat/history` in Python backend.
+- [x] Added TTS Play/Stop/Pause UI widgets.
+- [x] Formatted Multimodal Vision payloads for local model compatibility.
+
+### Phase 2: Ralph Loop Master Blueprint
+- [x] **Loop 1:** Dual-Pane Foldable UI + ANSI Terminal.
+- [x] **Loop 2:** Interactive Agent Tool Traces + Cartridge Uploads.
+- [x] **Loop 3:** PTT Audio Engine + Haptics + TTS Barge-in.
+- [x] **Loop 4:** Dashboard Settings + Macro Playbook.
+- [x] **Loop 5:** Async Git Sandbox (Auto-checkpoints before execution).
+- [x] **Loop 6:** Local RAG Memory (SQLite-based fact injection).
+
+---
+
+## 🚀 Upcoming: Phase 3 (Workspace Editor)
+*Target: Direct manipulation of BMO's "Brain" files.*
+
+- [ ] **File Navigator:** UI to switch between `SOUL.md`, `AGENTS.md`, and `MEMORY.md`.
+- [ ] **Live Editor:** Integration of a code editor (or styled textarea) using `GET/PUT /v1/workspace`.
+- [ ] **Sync Indicator:** Visual "Saved" state when writing to the Docker workspace.
+- [ ] **Hot-Reload Brain:** Button to signal OpenClaw to reload configuration after edits.
+
+---
+
+## 🛠️ Maintenance Commands
+- **Start Dev Server:** `npm run dev -- --host`
+- **Restart Backend:** `docker restart bmo_backend`
+- **Check Logs:** `adb logcat -d | grep Capacitor`
+- **Sync Android:** `npx cap sync android`

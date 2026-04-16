@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Terminal, ChevronDown, Trash2, StopCircle } from 'lucide-react';
+import { Terminal, ChevronDown, Trash2 } from 'lucide-react';
 
 const TelemetryTerminal = () => {
   const [lines, setLines] = useState([]);
@@ -29,27 +29,29 @@ const TelemetryTerminal = () => {
   };
 
   useEffect(() => {
-    const connect = () => {
-      const apiUrl = (import.meta.env.VITE_OPENCLAW_API_URL || "http://100.84.254.37:18789").replace(/^http/, 'ws');
-      const ws = new WebSocket(`${apiUrl}/ws/telemetry`);
-      wsRef.current = ws;
-
-      ws.onopen = () => setIsConnected(true);
-      ws.onclose = () => {
-        setIsConnected(false);
-        setTimeout(connect, 3000); // Reconnect loop
-      };
-      
-      ws.onmessage = (event) => {
-        setLines(prev => {
-          const newLines = [...prev, event.data];
-          return newLines.slice(-1000); // Cap at 1000 lines
+    let pollInterval;
+    
+    const fetchTelemetry = async () => {
+      try {
+        const response = await fetch(`${import.meta.env.VITE_OPENCLAW_API_URL}/v1/telemetry`, {
+          headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_OPENCLAW_API_KEY}`
+          }
         });
-      };
+        const data = await response.json();
+        if (data.lines) {
+          setLines(data.lines);
+          setIsConnected(true);
+        }
+      } catch (err) {
+        setIsConnected(false);
+      }
     };
 
-    connect();
-    return () => wsRef.current?.close();
+    fetchTelemetry();
+    pollInterval = setInterval(fetchTelemetry, 3000); // 3s polling
+    
+    return () => clearInterval(pollInterval);
   }, []);
 
   const scrollToBottom = useCallback(() => {

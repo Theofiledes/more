@@ -43,6 +43,7 @@ const Playbook = ({ onRunMacro }) => {
         {macros.map((m) => (
           <button
             key={m.id}
+            type="button"
             onClick={() => onRunMacro(m.prompt)}
             className={`${m.color} text-white p-2 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] active:translate-y-[2px] active:shadow-none transition-all flex flex-col items-center gap-1 text-center`}
           >
