@@ -5,7 +5,7 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
   const models = [
     { id: 'llama3.2:3b', label: 'STANDARD', desc: 'Llama 3.2 3B', icon: <Cpu size={14} /> },
     { id: 'gemma2:2b', label: 'TURBO', desc: 'Gemma 2 2B (Fast)', icon: <Zap size={14} /> },
-    { id: 'moondream:latest', label: 'MOONSHOT', desc: 'Tiny Vision Model', icon: <Sparkles size={14} /> },
+    { id: 'moondream', label: 'MOONSHOT', desc: 'Tiny Vision Model', icon: <Sparkles size={14} /> },
     { id: 'llama3.1:8b', label: 'POWER', desc: 'Llama 3.1 8B', icon: <Activity size={14} /> }
   ];
 

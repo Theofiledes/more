@@ -138,7 +138,7 @@ app.add_middleware(
 )
 
 # Configuration
-OPENCLAW_URL = "http://172.18.0.3:18789" # Use direct internal IP (Loop 6 fix)
+OPENCLAW_URL = "http://172.18.0.3:18789"
 API_TOKEN = "bmo-secret-key-2026"
 HISTORY_FILE = "history.json"
 
@@ -240,8 +240,10 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     body = await request.json()
     print(f"Incoming Request for model: {body.get('model')}")
     
-    # OpenClaw expects strictly "openclaw" as the model name
-    body["model"] = "openclaw"
+    # If no model provided, use moondream as a fast fallback
+    # Otherwise, respect the user's choice (openclaw handles the actual model routing)
+    if not body.get("model") or body.get("model") == "openclaw":
+        body["model"] = "moondream"
 
     await executor.checkpoint()
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
