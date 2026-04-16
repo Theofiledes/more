@@ -19,7 +19,6 @@ const useNativeTTS = () => {
     const synth = window.speechSynthesis;
     const updateVoices = () => {
       const available = synth.getVoices();
-      console.log("TTS_DEBUG: Voices found:", available.length);
       if (available.length > 0) setVoices(available);
     };
     updateVoices();
@@ -34,6 +33,8 @@ const useNativeTTS = () => {
 
   const speak = useCallback((text, onEnd) => {
     if (!window.speechSynthesis || typeof text !== 'string') return;
+    
+    // ANDROID FIX: Ensure we have an active utterance
     window.speechSynthesis.cancel();
     
     const utterance = new SpeechSynthesisUtterance(text);
@@ -142,7 +143,11 @@ export default function App() {
   const [useCrtFilter, setUseCrtFilter] = useState(true);
   const [activeBrain, setActiveBrain] = useState('openclaw');
   const [speakingMsgId, setSpeakingMsgId] = useState(null);
-  const [activeModel, setActiveModel] = useState('moondream');
+
+  // PERSISTENCE: Model Selector
+  const [activeModel, setActiveModel] = useState(() => localStorage.getItem('bmo_active_model') || 'moondream');
+  useEffect(() => { localStorage.setItem('bmo_active_model', activeModel); }, [activeModel]);
+
   const [safetyStride, setSafetyStride] = useState(true);
   const [isDreaming, setIsDreaming] = useState(false);
   const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry');
@@ -267,7 +272,7 @@ export default function App() {
           {/* BMO LEFT PANE */}
           <div className="bg-[#5acbb5] w-full h-full rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
             <div className="flex justify-center mb-3"><div className="w-16 h-2 bg-[#2d482e] rounded-full opacity-50"></div></div>
-            <div className="bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden">
+            <div className={`bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden`}>
               <div className="bg-[#b5d6a7] w-full h-full rounded-[12px] flex flex-col overflow-hidden relative border-4 border-[#2d482e] bmo-font text-[10px] sm:text-xs">
                 <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
                   <button type="button" onClick={() => setIsMenuOpen(true)} className="text-[#2d482e] hover:text-[#007aff] transition-colors"><Menu size={20} strokeWidth={3} /></button>
@@ -305,7 +310,6 @@ export default function App() {
                     </>
                   )}
                 </div>
-                {/* MENU OVERLAY */}
                 {isMenuOpen && (
                   <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex animate-in fade-in duration-200">
                     <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
@@ -343,11 +347,11 @@ export default function App() {
             </div>
             {/* LABELS & HARDWARE */}
             <div className="h-28 mt-4 flex justify-between items-center px-2 sm:px-6 relative">
-               <div className="absolute -top-4 left-6 label-font transform -rotate-12 pointer-events-none font-black text-black">UPLOAD</div>
-               <div className="absolute -top-4 left-1/2 -translate-x-1/2 label-font pointer-events-none font-black text-black">PTT</div>
-               <div className="absolute -top-4 right-10 label-font transform rotate-12 pointer-events-none font-black text-black">SEND</div>
+               <div className="absolute -top-4 left-6 label-font transform -rotate-12 pointer-events-none text-black">UPLOAD</div>
+               <div className="absolute -top-4 left-1/2 -translate-x-1/2 label-font pointer-events-none text-black">PTT</div>
+               <div className="absolute -top-4 right-10 label-font transform rotate-12 pointer-events-none text-black">SEND</div>
                <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
-               <div className="absolute bottom-2 right-12 label-font transform rotate-12 pointer-events-none font-black text-black">ACTION</div>
+               <div className="absolute bottom-2 right-12 label-font transform rotate-12 pointer-events-none text-black">ACTION</div>
             </div>
           </div>
           {/* DASHBOARD RIGHT PANE (Desktop Only) */}
