@@ -33,10 +33,15 @@ const useNativeTTS = () => {
 
   const speak = useCallback((text, onEnd) => {
     if (!window.speechSynthesis || typeof text !== 'string') return;
+    
+    // PRIME: Cancel any hanging audio
     window.speechSynthesis.cancel();
+    
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.pitch = 1.4;
     utterance.rate = 1.0;
+    utterance.volume = 1.0;
+    
     const voice = getBmoVoice();
     if (voice) utterance.voice = voice;
     
@@ -47,18 +52,6 @@ const useNativeTTS = () => {
     window.speechSynthesis.speak(utterance);
   }, [getBmoVoice]);
 
-  const pause = useCallback(() => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.pause();
-    setIsPaused(true);
-  }, []);
-
-  const resume = useCallback(() => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.resume();
-    setIsPaused(false);
-  }, []);
-
   const stop = useCallback(() => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -66,12 +59,24 @@ const useNativeTTS = () => {
     setIsPaused(false);
   }, []);
 
-  return { isSpeaking, isPaused, speak, pause, resume, stop };
+  return { isSpeaking, isPaused, speak, stop };
 };
 
 const fontStyle = `
-  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Gaegu:wght@700&display=swap');
+  
   .bmo-font { font-family: 'Press Start 2P', cursive; line-height: 1.4; }
+  
+  /* Hand-drawn Label Font */
+  .label-font { 
+    font-family: 'Gaegu', cursive; 
+    color: black;
+    font-weight: 900;
+    font-size: 14px;
+    letter-spacing: 1px;
+    text-shadow: 0.5px 0.5px 0px rgba(255,255,255,0.5);
+  }
+
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: #b5d6a7; border-left: 1px solid #2d482e; }
   ::-webkit-scrollbar-thumb { background: #2d482e; }
@@ -90,29 +95,9 @@ const parseToolCall = (text) => {
   return null;
 };
 
-const fetchGemini = async (prompt, base64Image = null, chatHistory = []) => {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-  const systemInstruction = { parts: [{ text: "You are BMO from Adventure Time. Speak in ALL CAPS. Keep it short." }] };
-  let contents = [...chatHistory];
-  const parts = [];
-  if (prompt) parts.push({ text: prompt });
-  if (base64Image) {
-    const mimeMatch = base64Image.match(/data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,/);
-    if (mimeMatch) parts.push({ inlineData: { mimeType: mimeMatch[1], data: base64Image.split(',')[1] } });
-  }
-  if (parts.length === 0) parts.push({ text: "HELLO BMO!" });
-  contents.push({ role: "user", parts });
-  const payload = { contents, systemInstruction };
-  try {
-    const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    const data = await response.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "BMO DOES NOT COMPUTE.";
-  } catch { return "ERROR CONNECTING TO MOTHERBOARD. ^_^;"; }
-};
-
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+  const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
   const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   if (isDesktopLocal) return "http://localhost:18789";
   return envUrl ? envUrl.replace(/\/$/, "") : "http://100.84.254.37:18789";
@@ -140,17 +125,17 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
   const [isServerSleeping, setIsServerSleeping] = useState(false);
   useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
-  const [pinInput, setPinInput] = useState('');
+  
   const [messages, setMessages] = useState([]);
   const [history, setHistory] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
   const [inputText, setInputText] = useState('');
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  
   const [isLoading, setIsLoading] = useState(false);
-  const [isEncoding, setIsEncoding] = useState(false);
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
   const [face, setFace] = useState('^_^');
+  
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
   const [useCrtFilter, setUseCrtFilter] = useState(true);
@@ -162,6 +147,9 @@ export default function App() {
   const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry');
   const [isTerminalOverlayOpen, setIsTerminalOverlayOpen] = useState(false);
   const [isDashboardOverlayOpen, setIsDashboardOverlayOpen] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isEncoding, setIsEncoding] = useState(false);
 
   const tts = useNativeTTS();
 
@@ -188,7 +176,7 @@ export default function App() {
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
 
-  const handleUserToggle = (user) => { setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); setSpeakingMsgId(null); setCurrentUser(user); setIsServerSleeping(false); setPinInput(''); setIsMenuOpen(false); setPendingFile(null); setPendingImageUrl(null); setMessages([]); setHistory([]); setActiveChatId(null); };
+  const handleUserToggle = (user) => { setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); setSpeakingMsgId(null); setCurrentUser(user); setIsServerSleeping(false); setPinInput(''); setIsMenuOpen(false); setMessages([]); setHistory([]); setActiveChatId(null); };
 
   const performServerHandshake = async (user) => {
     const apiUrl = getApiUrl();
@@ -310,7 +298,7 @@ export default function App() {
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]"><span className="font-bold text-[#2d482e]">SYSTEM</span><button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button></div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0]">
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase">Preferences</div>
-                         <button type="button" onClick={() => { tts.speak("BMO AWAKE"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2">🔊 WAKE AUDIO</button>
+                         <button type="button" onClick={() => { tts.speak("BMO IS AWAKE!"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2">🔊 WAKE AUDIO</button>
                          <button type="button" onClick={() => setIsDashboardOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2">🎮 BMO DASHBOARD</button>
                          <button type="button" onClick={() => setIsTerminalOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2">📟 SYSTEM TERMINAL</button>
                          <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
@@ -342,7 +330,14 @@ export default function App() {
                 )}
               </div>
             </div>
-            <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
+            {/* Hand-drawn Button Labels */}
+            <div className="relative">
+              <div className="absolute -top-4 left-4 label-font transform -rotate-12">UPLOAD</div>
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 label-font">PTT</div>
+              <div className="absolute -top-4 right-4 label-font transform rotate-12">SEND</div>
+              <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
+              <div className="absolute bottom-2 right-12 label-font transform rotate-12">ACTION</div>
+            </div>
           </div>
           <div className="hidden lg:flex flex-col h-full overflow-hidden gap-4">
             <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg">
