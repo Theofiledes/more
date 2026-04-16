@@ -11,17 +11,16 @@ const WorkspaceEditor = () => {
   const files = ['SOUL.md', 'AGENTS.md', 'MEMORY.md'];
 
   const getApiUrl = () => {
-    // Priority 1: If we're on localhost in browser, use localhost backend
-    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+    const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
+    const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && 
+                           (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+    if (isDesktopLocal) {
       return "http://localhost:18789";
     }
-    
-    // Priority 2: Use .env if provided
-    const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
-    if (envUrl) return envUrl.replace(/\/$/, "");
-    
-    // Fallback
-    return "http://100.84.254.37:18789";
+
+    return envUrl ? envUrl.replace(/\/$/, "") : "http://100.84.254.37:18789";
   };
 
   const fetchFile = async (filename) => {

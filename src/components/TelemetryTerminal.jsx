@@ -29,9 +29,14 @@ const TelemetryTerminal = () => {
   };
 
   const getApiUrl = () => {
-    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
+    const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && 
+                           (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+    if (isDesktopLocal) {
       return "http://localhost:18789";
     }
+    
     const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
     if (envUrl) return envUrl.replace(/\/$/, "");
     return "http://100.84.254.37:18789";

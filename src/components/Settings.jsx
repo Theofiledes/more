@@ -1,12 +1,14 @@
 import React from 'react';
-import { Shield, Cpu, Zap, Activity } from 'lucide-react';
+import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles } from 'lucide-react';
 
-const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride, isDreaming, setIsDreaming }) => {
-  const tiers = [
-    { label: 'Tier 1', desc: 'Flash (Fast)', icon: <Zap size={14} /> },
-    { label: 'Tier 2', desc: 'Standard', icon: <Cpu size={14} /> },
-    { label: 'Tier 3', desc: 'Pro (Smart)', icon: <Activity size={14} /> }
+const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, isDreaming, setIsDreaming }) => {
+  const models = [
+    { id: 'llama3.2:3b', label: 'STANDARD', desc: 'Llama 3.2 3B', icon: <Cpu size={14} /> },
+    { id: 'gemma2:2b', label: 'TURBO', desc: 'Gemma 2 2B (Fast)', icon: <Zap size={14} /> },
+    { id: 'moondream:latest', label: 'MOONSHOT', desc: 'Tiny Vision Model', icon: <Sparkles size={14} /> },
+    { id: 'llama3.1:8b', label: 'POWER', desc: 'Llama 3.1 8B', icon: <Activity size={14} /> }
   ];
+
 
   return (
     <div className="flex flex-col gap-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e]">
@@ -14,30 +16,25 @@ const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride, isDr
         <Shield size={14} /> SYSTEM CONFIG
       </div>
 
-      {/* Model Routing Slider */}
+      {/* Model Selector Dropdown */}
       <div className="flex flex-col gap-2">
-        <div className="text-[8px] opacity-70 uppercase tracking-widest">Model Routing Threshold</div>
-        <div className="relative mt-2 mb-6">
-          <input 
-            type="range" 
-            min="1" 
-            max="3" 
-            step="1" 
-            value={threshold}
-            onChange={(e) => setThreshold(parseInt(e.target.value))}
-            className="w-full h-2 bg-[#2d482e] rounded-lg appearance-none cursor-pointer accent-[#ffcc00]"
-          />
-          <div className="flex justify-between mt-2">
-            {tiers.map((t, i) => (
-              <div key={i} className={`flex flex-col items-center gap-1 ${threshold === i+1 ? 'text-[#ff3b30]' : 'opacity-50'}`}>
-                {t.icon}
-                <span className="text-[6px]">{t.label}</span>
-              </div>
+        <div className="text-[8px] opacity-70 uppercase tracking-widest">Active Neural Engine</div>
+        <div className="relative">
+          <select 
+            value={activeModel}
+            onChange={(e) => setActiveModel(e.target.value)}
+            className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[10px] p-2 rounded appearance-none focus:outline-none focus:ring-2 focus:ring-[#007aff] cursor-pointer"
+          >
+            {models.map(m => (
+              <option key={m.id} value={m.id}>{m.label} ({m.id})</option>
             ))}
+          </select>
+          <div className="absolute right-2 top-2.5 pointer-events-none">
+            <ChevronDown size={14} />
           </div>
         </div>
-        <div className="text-[8px] bg-[#9fc28e] p-2 border-2 border-[#2d482e] rounded italic text-center">
-          ACTIVE: {tiers[threshold-1].desc}
+        <div className="text-[6px] bg-[#2d482e]/10 p-1 rounded italic text-center">
+          {models.find(m => m.id === activeModel)?.desc || 'Custom Model'}
         </div>
       </div>
 
@@ -56,7 +53,7 @@ const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride, isDr
         </button>
       </div>
 
-      {/* Dream State Toggle (Loop 5) */}
+      {/* Dream State Toggle */}
       <div className="flex items-center justify-between gap-4 mt-2">
         <div className="flex flex-col">
           <span className="text-[8px] font-bold">DREAM STATE</span>

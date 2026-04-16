@@ -110,7 +110,7 @@ const USERS = {
 
 // Helper: detect if a BMO message contains a JSON tool call
 const parseToolCall = (text) => {
-  if (!text || !text.trim().startsWith('{')) return null;
+  if (!text || typeof text !== 'string' || !text.trim().startsWith('{')) return null;
   try {
     const parsed = JSON.parse(text);
     if (parsed && typeof parsed.tool === 'string') {
@@ -176,22 +176,26 @@ const fetchGemini = async (prompt, base64Image = null, chatHistory = []) => {
 
 // --- Helper to get dynamic API URL ---
 const getApiUrl = () => {
-  // Priority 1: If we're on localhost in browser, use localhost backend
-  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+  const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+  
+  // Detection
+  const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
+  const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && 
+                         (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  // If we are in a desktop browser on localhost, use localhost
+  if (isDesktopLocal) {
     return "http://localhost:18789";
   }
 
-  // Priority 2: Use .env if provided
-  const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
-  if (envUrl) return envUrl.replace(/\/$/, "");
-  
-  return "http://100.84.254.37:18789";
+  // For phone (Capacitor) or remote access, use the Tailscale IP
+  return envUrl ? envUrl.replace(/\/$/, "") : "http://100.84.254.37:18789";
 };
 
 const getApiToken = () => import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
 
 // --- OpenClaw API Helper ---
-const sendOpenClawCommand = async (command, history = [], image = null) => {
+const sendOpenClawCommand = async (command, history = [], image = null, model = "openclaw") => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
   
@@ -226,7 +230,7 @@ const sendOpenClawCommand = async (command, history = [], image = null) => {
         "Authorization": `Bearer ${apiToken}`
       },
       body: JSON.stringify({
-        model: "openclaw",
+        model: model,
         messages: messages
       }),
       signal: controller.signal
@@ -273,25 +277,37 @@ export default function App() {
   const [activeBrain, setActiveBrain] = useState('openclaw'); // Default to openclaw
   const [speakingMsgId, setSpeakingMsgId] = useState(null); // ID of the message being spoken
   
-  // Dashboard states (Loop 4)
-  const [threshold, setThreshold] = useState(2);
+  // Dashboard states (Loop 4/5)
+  const [activeModel, setActiveModel] = useState('llama3.2:3b');
   const [safetyStride, setSafetyStride] = useState(true);
   const [isDreaming, setIsDreaming] = useState(false);
   const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry'); // 'telemetry' or 'editor'
+  const [isTerminalOverlayOpen, setIsTerminalOverlayOpen] = useState(false); // For small screens
 
   const tts = useNativeTTS();
 
-  // Phase 4/5: Sync state to backend
+  // Phase 4/5: Sync state to backend (Using HTTP instead of WS to prevent startup crash)
   useEffect(() => {
-    const apiUrl = getApiUrl().replace(/^http/, 'ws');
-    const ws = new WebSocket(`${apiUrl}/ws/telemetry`);
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ 
-        safety_stride: safetyStride,
-        is_dreaming: isDreaming 
-      }));
-      setTimeout(() => ws.close(), 500);
+    const syncState = async () => {
+      try {
+        const apiUrl = getApiUrl();
+        const apiToken = getApiToken();
+        await fetch(`${apiUrl}/v1/telemetry/state`, {
+          method: 'POST',
+          headers: { 
+            "Authorization": `Bearer ${apiToken}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ 
+            safety_stride: safetyStride,
+            is_dreaming: isDreaming 
+          })
+        });
+      } catch (e) {
+        // Silently fail sync if offline
+      }
     };
+    syncState();
   }, [safetyStride, isDreaming]);
 
   const messagesEndRef = useRef(null);
@@ -324,7 +340,7 @@ export default function App() {
     }, 4000 + Math.random() * 2000);
 
     return () => clearInterval(blinkInterval);
-  }, [isLoading, isHappy]);
+  }, [isLoading, isHappy, isEating]);
 
   // --- Scroll to Bottom ---
   const scrollToBottom = () => {
@@ -336,10 +352,10 @@ export default function App() {
 
   // --- Handlers ---
   const handleUserToggle = (user) => {
-    tts.stop();
+    setIsAuthenticated(false); 
+    localStorage.removeItem('bmo_authenticated');
     setSpeakingMsgId(null);
     setCurrentUser(user);
-    setIsAuthenticated(false);
     setIsServerSleeping(false);
     setPinInput('');
     setIsMenuOpen(false);
@@ -363,7 +379,7 @@ export default function App() {
         const serverChats = Array.isArray(data.chats) ? data.chats : [];
         const serverMessages = Array.isArray(data.messages) ? data.messages : [];
         
-        // Only update history if local is empty, or merge carefully
+        // Only update history if local is empty
         setHistory(prev => prev.length > 0 ? prev : serverChats);
         setMessages(prev => prev.length > 0 ? prev : serverMessages);
 
@@ -393,9 +409,6 @@ export default function App() {
       // Server unreachable — show "Asleep" face
       console.error("Handshake failed:", e);
       setIsServerSleeping(true);
-      
-      // CRITICAL FIX: Do NOT set isAuthenticated(false) here. 
-      // If we were already authenticated, stay authenticated so we don't get kicked to the PIN screen.
       if (history.length === 0) {
         const fallbackId = 1;
         setHistory([{ id: fallbackId, user: user, title: 'OFFLINE_MODE' }]);
@@ -485,7 +498,7 @@ export default function App() {
       bmoResponseText = await fetchGemini(currentInput, currentImage, formattedHistory);
     } else {
       setFace('O_O');
-      const result = await sendOpenClawCommand(currentInput, currentActiveMessages.slice(-6), currentImage);
+      const result = await sendOpenClawCommand(currentInput, currentActiveMessages.slice(-6), currentImage, activeModel);
       if (result) {
         bmoResponseText = result;
       } else {
@@ -524,35 +537,6 @@ export default function App() {
       const lastMsgId = activeMessages[activeMessages.length - 1].id;
       return prev.filter(m => m.id !== lastMsgId);
     });
-  };
-
-  const generateAdventure = async () => {
-    if (!isAuthenticated || isLoading) return;
-    setIsLoading(true);
-    
-    const prompt = "Generate a short, fun, 2-sentence Adventure Time style quest for us to go on today! Include ✨ emojis.";
-    const bmoResponseText = await fetchGemini(prompt, null, []);
-    
-    setIsLoading(false);
-    setIsHappy(true);
-    
-    const bmoMsgId = Date.now();
-    const bmoMsg = {
-      id: bmoMsgId,
-      chatId: activeChatId,
-      user: currentUser,
-      sender: 'bmo',
-      type: 'text',
-      text: bmoResponseText
-    };
-    setMessages(prev => [...prev, bmoMsg]);
-
-    if (!parseToolCall(bmoResponseText)) {
-      setSpeakingMsgId(bmoMsgId);
-      tts.speak(bmoResponseText, () => setSpeakingMsgId(null));
-    }
-
-    setTimeout(() => setIsHappy(false), 2000);
   };
 
   const handleFileSelect = (e) => {
@@ -596,8 +580,6 @@ export default function App() {
   const onStopTTS = () => {
     tts.stop();
     setSpeakingMsgId(null);
-    // Emit SIGINT to backend via a temporary WebSocket or shared state
-    // For this pass, we'll just log it. (In Loop 5, this will be wired to the main WS)
     console.log("PTT Triggered: Emitting SIGINT signal");
   };
 
@@ -648,6 +630,7 @@ export default function App() {
                       <p className="mb-2 leading-relaxed">ASLEEP...</p>
                       <p className="mb-6 opacity-70 text-[8px] leading-relaxed">NO TAILSCALE DETECTED.<br/>CHECK VPN CONNECTION.</p>
                       <button
+                        type="button"
                         onClick={retryConnection}
                         className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] hover:shadow-none transition-all"
                       >
@@ -709,6 +692,7 @@ export default function App() {
                              </span>
                            </div>
                            <button 
+                             type="button"
                              onClick={() => { setPendingFile(null); setPendingImageUrl(null); }} 
                              className="text-[#ff3b30]"
                            >
@@ -739,16 +723,25 @@ export default function App() {
                       
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]">
                         <span className="font-bold text-[#2d482e]">SYSTEM</span>
-                        <button onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]">
+                        <button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]">
                           <X size={20} strokeWidth={3} />
                         </button>
                       </div>
 
                       {/* Settings Toggle */}
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0]">
-                         <div className="text-[8px] text-[#2d482e] mb-2 font-bold">SYSTEM PREFERENCES</div>
+                         <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase">System Preferences</div>
                          
                          <button 
+                            type="button"
+                            onClick={() => setIsTerminalOverlayOpen(true)}
+                            className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] transition-colors hover:brightness-110 flex items-center justify-center gap-2"
+                          >
+                            📟 SYSTEM TERMINAL
+                          </button>
+
+                         <button 
+                            type="button"
                             onClick={() => setUseCrtFilter(!useCrtFilter)}
                             className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
                               useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'
@@ -758,6 +751,7 @@ export default function App() {
                           </button>
 
                           <button 
+                            type="button"
                             onClick={() => setActiveBrain('gemini')}
                             className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
                               activeBrain === 'gemini' ? 'bg-[#007aff] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
@@ -767,6 +761,7 @@ export default function App() {
                           </button>
                           
                           <button 
+                            type="button"
                             onClick={() => setActiveBrain('openclaw')}
                             className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${
                               activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[2px_2px_0_#2d482e]' : 'bg-[#b5d6a7] text-[#2d482e] hover:bg-[#9fc28e]'
@@ -861,7 +856,7 @@ export default function App() {
               onUploadFile={() => fileInputRef.current?.click()}
               onOpenCamera={() => cameraInputRef.current?.click()}
               onDeleteLast={deleteLastMessage}
-              onStopTTS={() => { tts.stop(); setSpeakingMsgId(null); }}
+              onStopTTS={onStopTTS}
             />
           </div>
 
@@ -896,8 +891,8 @@ export default function App() {
             
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
               <Settings 
-                threshold={threshold} 
-                setThreshold={setThreshold} 
+                activeModel={activeModel} 
+                setActiveModel={setActiveModel} 
                 safetyStride={safetyStride} 
                 setSafetyStride={setSafetyStride} 
                 isDreaming={isDreaming}
@@ -920,6 +915,28 @@ export default function App() {
           </div>
 
         </div>
+
+        {/* Terminal Overlay for Small Screens (Phase 5 Refinement) */}
+        {isTerminalOverlayOpen && (
+          <div className="fixed inset-0 bg-black z-[100] flex flex-col p-4 animate-in fade-in duration-300">
+            <div className="flex justify-between items-center mb-4">
+              <div className="text-[#b5d6a7] bmo-font text-xs flex items-center gap-2">
+                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                LIVE_TELEMETRY
+              </div>
+              <button 
+                type="button"
+                onClick={() => setIsTerminalOverlayOpen(false)}
+                className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-white bmo-font text-[10px] shadow-[2px_2px_0_white]"
+              >
+                EXIT
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <TelemetryTerminal />
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

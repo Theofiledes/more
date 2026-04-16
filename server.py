@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Union
 from pydantic import BaseModel
 from git import Repo
-from memory_manager import memory_manager
 
 app = FastAPI()
 auth_scheme = HTTPBearer()
@@ -30,6 +29,8 @@ class AgentExecutor:
     async def checkpoint(self):
         if self.repo:
             try:
+                # Fix dubious ownership inside container
+                self.repo.git.config("--global", "--add", "safe.directory", "/app")
                 self.repo.git.add(A=True)
                 if self.repo.is_dirty():
                     self.repo.index.commit("Pre-execution state [BMO_AUTO]")
@@ -98,7 +99,8 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
         for connection in self.active_connections:
@@ -109,10 +111,19 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Track telemetry in a global buffer for HTTP polling
+telemetry_buffer = []
+
+async def broadcast_to_managers(message: str):
+    telemetry_buffer.append(message)
+    if len(telemetry_buffer) > 1000:
+        telemetry_buffer.pop(0)
+    await manager.broadcast(message)
+
 # Background heartbeat task (Loop 6 fix)
 async def start_heartbeat():
     while True:
-        await asyncio.sleep(10)
+        await asyncio.sleep(15) # Reduced frequency to minimize noise
         await broadcast_to_managers("\u001b[35m[HEARTBEAT] KERNEL IS ALIVE\u001b[0m")
 
 @app.on_event("startup")
@@ -151,18 +162,26 @@ def save_history(history):
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=2)
 
-# Track telemetry in a global buffer for HTTP polling
-telemetry_buffer = []
-
-async def broadcast_to_managers(message: str):
-    telemetry_buffer.append(message)
-    if len(telemetry_buffer) > 1000:
-        telemetry_buffer.pop(0)
-    await manager.broadcast(message)
-
 @app.get("/v1/telemetry")
 async def get_telemetry_poll(token: str = Depends(get_token)):
     return {"lines": telemetry_buffer}
+
+@app.post("/v1/telemetry/state")
+async def update_telemetry_state(request: Request, token: str = Depends(get_token)):
+    global is_safety_stride_active, is_dreaming_active
+    msg = await request.json()
+    
+    if "safety_stride" in msg:
+        is_safety_stride_active = bool(msg["safety_stride"])
+        status_color = "\u001b[32mON" if is_safety_stride_active else "\u001b[31mOFF"
+        await broadcast_to_managers(f"\u001b[36m[GUARDIAN] PROTOCOL IS {status_color}\u001b[0m")
+
+    if "is_dreaming" in msg:
+        is_dreaming_active = bool(msg["is_dreaming"])
+        status_color = "\u001b[35mACTIVE" if is_dreaming_active else "\u001b[31mINACTIVE"
+        await broadcast_to_managers(f"\u001b[35m[DREAMER] STATE IS {status_color}\u001b[0m")
+        
+    return {"status": "updated"}
 
 # Track sentinel states
 is_safety_stride_active = True
@@ -205,7 +224,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         while True:
             await asyncio.sleep(10)
-            await broadcast_to_managers("\u001b[35m[HEARTBEAT] KERNEL IS ALIVE\u001b[0m")
+            # websocket keeps alive
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
@@ -216,7 +235,7 @@ async def approve_command(token: str = Depends(get_token)):
     
     cmd = executor.pending_command
     # Run in background so request returns immediately
-    asyncio.create_task(executor.run_command(cmd, manager.broadcast))
+    asyncio.create_task(executor.run_command(cmd, broadcast_to_managers))
     return {"status": "execution_started"}
 
 @app.post("/v1/reject")
@@ -234,6 +253,7 @@ async def get_history(token: str = Depends(get_token)):
 
 @app.get("/v1/workspace/{filename}")
 async def get_workspace_file(filename: str, token: str = Depends(get_token)):
+    from memory_manager import memory_manager
     content = memory_manager.get_workspace_file(filename)
     if content is None:
         raise HTTPException(status_code=403, detail="File access restricted")
@@ -241,6 +261,7 @@ async def get_workspace_file(filename: str, token: str = Depends(get_token)):
 
 @app.put("/v1/workspace/{filename}")
 async def save_workspace_file(filename: str, file: WorkspaceFile, token: str = Depends(get_token)):
+    from memory_manager import memory_manager
     success = memory_manager.save_workspace_file(filename, file.content)
     if not success:
         raise HTTPException(status_code=403, detail="File access restricted")
@@ -250,34 +271,12 @@ async def save_workspace_file(filename: str, file: WorkspaceFile, token: str = D
 async def chat_completions(request: Request, token: str = Depends(get_token)):
     body = await request.json()
     
+    # Ensure a valid model is passed to OpenClaw (must match openclaw.json)
+    if not body.get("model") or body.get("model") == "openclaw":
+        body["model"] = "llama3.2:3b"
+
     # Loop 5: Pre-execution checkpoint
     await executor.checkpoint()
-
-    # Loop 6: RAG Context Injection
-    user_query = ""
-    messages = body.get("messages", [])
-    if messages:
-        last_msg = messages[-1]["content"]
-        if isinstance(last_msg, list):
-            user_query = " ".join([p["text"] for p in last_msg if p["type"] == "text"])
-        else:
-            user_query = str(last_msg)
-
-    if user_query:
-        facts = memory_manager.search_facts(user_query)
-        if facts:
-            context_str = "\n".join([f"- {f}" for f in facts])
-            system_injection = f"\n\n[RELEVANT MEMORIES]\n{context_str}\n"
-            
-            found_system = False
-            for m in messages:
-                if m["role"] == "system":
-                    m["content"] += system_injection
-                    found_system = True
-                    break
-            
-            if not found_system:
-                messages.insert(0, {"role": "system", "content": f"You are BMO. Use these memories if relevant: {system_injection}"})
 
     # Proxy to OpenClaw
     headers = {
@@ -286,22 +285,22 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     }
     
     try:
-        print(f"Proxying request to OpenClaw: {OPENCLAW_URL}/v1/chat/completions")
         response = requests.post(
             f"{OPENCLAW_URL}/v1/chat/completions",
             json=body,
             headers=headers,
             timeout=120
         )
-        print(f"OpenClaw responded with status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
         
-        # Save message to history and facts (Loop 6)
+        # Save message to history
         if "choices" in data and len(data["choices"]) > 0:
             assistant_message = data["choices"][0]["message"]["content"]
+            user_message = body["messages"][-1]["content"]
+            if isinstance(user_message, list):
+                user_message = " ".join([p["text"] for p in user_message if p["type"] == "text"])
             
-            # Update history.json
             hist = load_history()
             new_id = len(hist["messages"]) + 1
             hist["messages"].append({
@@ -310,7 +309,7 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
                 "user": "Anthony",
                 "sender": "user",
                 "type": "text",
-                "text": user_query
+                "text": user_message
             })
             hist["messages"].append({
                 "id": new_id + 1,
@@ -321,14 +320,9 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
                 "text": assistant_message
             })
             save_history(hist)
-
-            # Loop 6: Store important facts (heuristic: longer than 20 chars)
-            if len(assistant_message) > 20:
-                memory_manager.add_fact(assistant_message)
         
         return data
     except Exception as e:
-        print(f"Error proxying to OpenClaw: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
