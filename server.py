@@ -240,9 +240,8 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     body = await request.json()
     print(f"Incoming Request for model: {body.get('model')}")
     
-    # Correct ID from openclaw.json
-    if not body.get("model") or body.get("model") in ["openclaw", "llama3.2:3b"]:
-        body["model"] = "moondream"
+    # OpenClaw expects strictly "openclaw" as the model name
+    body["model"] = "openclaw"
 
     await executor.checkpoint()
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
