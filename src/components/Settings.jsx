@@ -1,7 +1,7 @@
 import React from 'react';
 import { Shield, Cpu, Zap, Activity } from 'lucide-react';
 
-const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride }) => {
+const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride, isDreaming, setIsDreaming }) => {
   const tiers = [
     { label: 'Tier 1', desc: 'Flash (Fast)', icon: <Zap size={14} /> },
     { label: 'Tier 2', desc: 'Standard', icon: <Cpu size={14} /> },
@@ -41,11 +41,11 @@ const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride }) =>
         </div>
       </div>
 
-      {/* Safety Stride Toggle */}
+      {/* Guardian Protocol Toggle */}
       <div className="flex items-center justify-between gap-4 mt-2">
         <div className="flex flex-col">
-          <span className="text-[8px] font-bold">SAFETY-STRIDE</span>
-          <span className="text-[6px] opacity-60">MANUAL PR APPROVAL</span>
+          <span className="text-[8px] font-bold">GUARDIAN PROTOCOL</span>
+          <span className="text-[6px] opacity-60">MANUAL ACTION GATE</span>
         </div>
         <button 
           type="button"
@@ -53,6 +53,21 @@ const Settings = ({ threshold, setThreshold, safetyStride, setSafetyStride }) =>
           className={`w-12 h-6 rounded-full border-2 border-[#2d482e] transition-all relative ${safetyStride ? 'bg-[#ffcc00]' : 'bg-gray-400'}`}
         >
           <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full border border-[#2d482e] transition-all ${safetyStride ? 'left-6' : 'left-0.5'}`}></div>
+        </button>
+      </div>
+
+      {/* Dream State Toggle (Loop 5) */}
+      <div className="flex items-center justify-between gap-4 mt-2">
+        <div className="flex flex-col">
+          <span className="text-[8px] font-bold">DREAM STATE</span>
+          <span className="text-[6px] opacity-60">AUTONOMOUS ACTING</span>
+        </div>
+        <button 
+          type="button"
+          onClick={() => setIsDreaming(!isDreaming)}
+          className={`w-12 h-6 rounded-full border-2 border-[#2d482e] transition-all relative ${isDreaming ? 'bg-[#ff3b30] animate-pulse' : 'bg-gray-400'}`}
+        >
+          <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full border border-[#2d482e] transition-all ${isDreaming ? 'left-6' : 'left-0.5'}`}></div>
         </button>
       </div>
     </div>

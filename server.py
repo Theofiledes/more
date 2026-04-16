@@ -16,10 +16,11 @@ auth_scheme = HTTPBearer()
 class WorkspaceFile(BaseModel):
     content: str
 
-# Agent Subprocess Tracking (Loop 5)
+# Agent Subprocess Tracking (Loop 5/6)
 class AgentExecutor:
     def __init__(self):
         self.active_process = None
+        self.pending_command = None # For Phase 4 Sentinel
         self.repo = None
         try:
             self.repo = Repo("/app")
@@ -30,16 +31,26 @@ class AgentExecutor:
         if self.repo:
             try:
                 self.repo.git.add(A=True)
-                self.repo.index.commit("Pre-execution state [BMO_AUTO]")
-                print("Git checkpoint created.")
+                if self.repo.is_dirty():
+                    self.repo.index.commit("Pre-execution state [BMO_AUTO]")
+                    print("Git checkpoint created.")
                 return True
             except Exception as e:
                 print(f"Git checkpoint failed: {e}")
         return False
 
-    async def run_command(self, cmd: str, broadcast_fn):
+    async def run_command(self, cmd: str, broadcast_fn, wait_for_approval=False):
+        if wait_for_approval:
+            self.pending_command = cmd
+            await broadcast_fn(json.dumps({
+                "tool": "sentinel",
+                "status": "pending",
+                "pending_approval": True,
+                "diff": f"COMMAND: {cmd}\n[WAITING FOR HUMAN PERMISSION...]"
+            }))
+            return
+
         await self.checkpoint()
-        
         await broadcast_fn(f"\u001b[33m[EXECUTING] {cmd}\u001b[0m")
         
         try:
@@ -66,6 +77,7 @@ class AgentExecutor:
             await broadcast_fn(f"\u001b[31m[EXECUTION_ERROR] {e}\u001b[0m")
         finally:
             self.active_process = None
+            self.pending_command = None
 
     def kill(self):
         if self.active_process:
@@ -152,23 +164,40 @@ async def broadcast_to_managers(message: str):
 async def get_telemetry_poll(token: str = Depends(get_token)):
     return {"lines": telemetry_buffer}
 
+# Track sentinel states
+is_safety_stride_active = True
+is_dreaming_active = False
+
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):
+    global is_safety_stride_active, is_dreaming_active
     await manager.connect(websocket)
     try:
         await websocket.send_text("\u001b[32m[BMO_OS] TELEMETRY SUBSYSTEM ONLINE\u001b[0m")
         
         async def listen_for_commands():
+            global is_safety_stride_active, is_dreaming_active
             try:
                 while True:
                     data = await websocket.receive_text()
                     try:
                         msg = json.loads(data)
+                        if "safety_stride" in msg:
+                            is_safety_stride_active = bool(msg["safety_stride"])
+                            status_color = "\u001b[32mON" if is_safety_stride_active else "\u001b[31mOFF"
+                            await broadcast_to_managers(f"\u001b[36m[GUARDIAN] PROTOCOL IS {status_color}\u001b[0m")
+
+                        if "is_dreaming" in msg:
+                            is_dreaming_active = bool(msg["is_dreaming"])
+                            status_color = "\u001b[35mACTIVE" if is_dreaming_active else "\u001b[31mINACTIVE"
+                            await broadcast_to_managers(f"\u001b[35m[DREAMER] STATE IS {status_color}\u001b[0m")
+
                         if msg.get("command") == "SIGINT":
                             if executor.kill():
                                 await broadcast_to_managers("\u001b[31m[KERNEL] INTERRUPT SIGNAL RECEIVED - PROCESS KILLED\u001b[0m")
+                        
                         if msg.get("command") == "test_run":
-                            asyncio.create_task(executor.run_command("ls -R /app", broadcast_to_managers))
+                            asyncio.create_task(executor.run_command("ls -R /app", broadcast_to_managers, wait_for_approval=is_safety_stride_active))
                     except: pass
             except: pass
 
@@ -179,6 +208,25 @@ async def websocket_endpoint(websocket: WebSocket):
             await broadcast_to_managers("\u001b[35m[HEARTBEAT] KERNEL IS ALIVE\u001b[0m")
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+@app.post("/v1/approve")
+async def approve_command(token: str = Depends(get_token)):
+    if not executor.pending_command:
+        raise HTTPException(status_code=400, detail="No pending command to approve")
+    
+    cmd = executor.pending_command
+    # Run in background so request returns immediately
+    asyncio.create_task(executor.run_command(cmd, manager.broadcast))
+    return {"status": "execution_started"}
+
+@app.post("/v1/reject")
+async def reject_command(token: str = Depends(get_token)):
+    if not executor.pending_command:
+        raise HTTPException(status_code=400, detail="No pending command to reject")
+    
+    executor.pending_command = None
+    await broadcast_to_managers("\u001b[31m[SENTINEL] COMMAND REJECTED BY USER\u001b[0m")
+    return {"status": "rejected"}
 
 @app.get("/v1/chat/history")
 async def get_history(token: str = Depends(get_token)):

@@ -276,9 +276,23 @@ export default function App() {
   // Dashboard states (Loop 4)
   const [threshold, setThreshold] = useState(2);
   const [safetyStride, setSafetyStride] = useState(true);
+  const [isDreaming, setIsDreaming] = useState(false);
   const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry'); // 'telemetry' or 'editor'
 
   const tts = useNativeTTS();
+
+  // Phase 4/5: Sync state to backend
+  useEffect(() => {
+    const apiUrl = getApiUrl().replace(/^http/, 'ws');
+    const ws = new WebSocket(`${apiUrl}/ws/telemetry`);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ 
+        safety_stride: safetyStride,
+        is_dreaming: isDreaming 
+      }));
+      setTimeout(() => ws.close(), 500);
+    };
+  }, [safetyStride, isDreaming]);
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -667,8 +681,9 @@ export default function App() {
                         tts={tts}
                         speakingMsgId={speakingMsgId}
                         setSpeakingMsgId={setSpeakingMsgId}
+                        getApiUrl={getApiUrl}
+                        getApiToken={getApiToken}
                       />
-
                       {isLoading && (
                         <div className="self-start p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white animate-pulse mx-3 mb-2">
                           ...
@@ -885,6 +900,8 @@ export default function App() {
                 setThreshold={setThreshold} 
                 safetyStride={safetyStride} 
                 setSafetyStride={setSafetyStride} 
+                isDreaming={isDreaming}
+                setIsDreaming={setIsDreaming}
               />
               
               <Playbook onRunMacro={(prompt) => {

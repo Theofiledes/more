@@ -28,14 +28,23 @@ const TelemetryTerminal = () => {
     }).filter(p => p !== null);
   };
 
+  const getApiUrl = () => {
+    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      return "http://localhost:18789";
+    }
+    const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+    if (envUrl) return envUrl.replace(/\/$/, "");
+    return "http://100.84.254.37:18789";
+  };
+
   useEffect(() => {
     let pollInterval;
     
     const fetchTelemetry = async () => {
       try {
-        const response = await fetch(`${import.meta.env.VITE_OPENCLAW_API_URL}/v1/telemetry`, {
+        const response = await fetch(`${getApiUrl()}/v1/telemetry`, {
           headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_OPENCLAW_API_KEY}`
+            'Authorization': `Bearer ${import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026"}`
           }
         });
         const data = await response.json();

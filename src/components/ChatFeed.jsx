@@ -1,8 +1,25 @@
 import React, { useState } from 'react';
-import { Settings, CheckCircle, XCircle, Loader2, Play, Square, FileText, Image as ImageIcon } from 'lucide-react';
+import { Settings, CheckCircle, XCircle, Loader2, Play, Square, FileText, Image as ImageIcon, StopCircle } from 'lucide-react';
 
-const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId }) => {
+const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken }) => {
   const [expandedToolId, setExpandedToolId] = useState(null);
+
+  const handleApproval = async (approved) => {
+    try {
+      const apiUrl = getApiUrl();
+      const apiToken = getApiToken();
+      const endpoint = approved ? 'approve' : 'reject';
+      
+      const response = await fetch(`${apiUrl}/v1/${endpoint}`, {
+        method: 'POST',
+        headers: { "Authorization": `Bearer ${apiToken}` }
+      });
+      
+      if (!response.ok) throw new Error("Approval failed");
+    } catch (err) {
+      console.error("Sentinel action failed:", err);
+    }
+  };
 
   const parseToolCall = (text) => {
     if (!text || typeof text !== 'string' || !text.trim().startsWith('{')) return null;
@@ -116,8 +133,8 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                   {toolData.pending_approval && toolData.diff && (
                     <DiffViewer 
                       diff={toolData.diff} 
-                      onApprove={() => console.log("Approved tool:", toolData.id)}
-                      onReject={() => console.log("Rejected tool:", toolData.id)}
+                      onApprove={() => handleApproval(true)}
+                      onReject={() => handleApproval(false)}
                     />
                   )}
                 </div>
