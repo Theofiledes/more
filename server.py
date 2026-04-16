@@ -241,7 +241,7 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     print(f"Incoming Request for model: {body.get('model')}")
     
     # Correct ID from openclaw.json
-    if not body.get("model") or body.get("model") in ["openclaw", "llama3.2:3b", "moondream:latest"]:
+    if not body.get("model") or body.get("model") in ["openclaw", "llama3.2:3b"]:
         body["model"] = "moondream"
 
     await executor.checkpoint()
