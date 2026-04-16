@@ -7,65 +7,65 @@ import Settings from './components/Settings';
 import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
 // --- Native TTS Hook ---
 const useNativeTTS = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [voices, setVoices] = useState([]);
-
-  useEffect(() => {
-    if (!window.speechSynthesis) return;
-    const synth = window.speechSynthesis;
-    const updateVoices = () => {
-      const available = synth.getVoices();
-      if (available.length > 0) setVoices(available);
-    };
-    updateVoices();
-    synth.addEventListener('voiceschanged', updateVoices);
-    return () => synth.removeEventListener('voiceschanged', updateVoices);
+  
+  const speak = useCallback(async (text, onEnd) => {
+    if (!text || typeof text !== 'string') return;
+    
+    try {
+      console.log("TTS_DEBUG: Attempting Native Speak:", text);
+      setIsSpeaking(true);
+      
+      // Stop any current speech
+      await TextToSpeech.stop();
+      
+      await TextToSpeech.speak({
+        text: text,
+        lang: 'en-US',
+        rate: 1.0,
+        pitch: 1.2,
+        volume: 1.0,
+        category: 'ambient',
+      });
+      
+      setIsSpeaking(false);
+      onEnd?.();
+    } catch (e) {
+      console.error("TTS_DEBUG: Native Speak Failed, falling back to Web:", e);
+      
+      // Web Fallback
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.pitch = 1.4;
+        utterance.onend = () => { setIsSpeaking(false); onEnd?.(); };
+        window.speechSynthesis.speak(utterance);
+      } else {
+        setIsSpeaking(false);
+        onEnd?.();
+      }
+    }
   }, []);
 
-  const getBmoVoice = useCallback(() => {
-    if (voices.length === 0) return null;
-    return voices.find(v => v.lang.startsWith('en-US')) || voices[0] || null;
-  }, [voices]);
-
-  const speak = useCallback((text, onEnd) => {
-    if (!window.speechSynthesis || typeof text !== 'string') return;
-    
-    // ANDROID FIX: Ensure we have an active utterance
-    window.speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.pitch = 1.4;
-    utterance.rate = 1.0;
-    utterance.volume = 1.0;
-    
-    const voice = getBmoVoice();
-    if (voice) utterance.voice = voice;
-    
-    utterance.onstart = () => { console.log("TTS_DEBUG: Started"); setIsSpeaking(true); setIsPaused(false); };
-    utterance.onend = () => { console.log("TTS_DEBUG: Ended"); setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
-    utterance.onerror = (e) => { console.error("TTS_DEBUG: Error", e); setIsSpeaking(false); setIsPaused(false); onEnd?.(); };
-    
-    window.speechSynthesis.speak(utterance);
-  }, [getBmoVoice]);
-
-  const stop = useCallback(() => {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
+  const stop = useCallback(async () => {
+    try {
+      await TextToSpeech.stop();
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+    } catch (e) { }
     setIsSpeaking(false);
-    setIsPaused(false);
   }, []);
 
-  return { isSpeaking, isPaused, speak, stop };
+  return { isSpeaking, speak, stop };
 };
 
 const fontStyle = `
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Gaegu:wght@700&display=swap');
   .bmo-font { font-family: 'Press Start 2P', cursive; line-height: 1.4; }
-  .label-font { font-family: 'Gaegu', cursive; color: #2d482e; font-weight: 900; font-size: 10px; opacity: 0.8; }
+  .label-font { font-family: 'Gaegu', cursive; color: black; font-weight: 900; font-size: 10px; }
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: #b5d6a7; border-left: 1px solid #2d482e; }
   ::-webkit-scrollbar-thumb { background: #2d482e; }
@@ -144,7 +144,6 @@ export default function App() {
   const [activeBrain, setActiveBrain] = useState('openclaw');
   const [speakingMsgId, setSpeakingMsgId] = useState(null);
 
-  // PERSISTENCE: Model Selector
   const [activeModel, setActiveModel] = useState(() => localStorage.getItem('bmo_active_model') || 'moondream');
   useEffect(() => { localStorage.setItem('bmo_active_model', activeModel); }, [activeModel]);
 
@@ -182,18 +181,8 @@ export default function App() {
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
 
   const handleUserToggle = (user) => { 
-    setIsAuthenticated(false); 
-    localStorage.removeItem('bmo_authenticated'); 
-    localStorage.removeItem('bmo_messages');
-    localStorage.removeItem('bmo_input_buffer');
-    setSpeakingMsgId(null); 
-    setCurrentUser(user); 
-    setIsServerSleeping(false); 
-    setPinInput(''); 
-    setIsMenuOpen(false); 
-    setMessages([]); 
-    setHistory([]); 
-    setActiveChatId(null); 
+    setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); localStorage.removeItem('bmo_messages'); localStorage.removeItem('bmo_input_buffer');
+    setSpeakingMsgId(null); setCurrentUser(user); setIsServerSleeping(false); setPinInput(''); setIsMenuOpen(false); setMessages([]); setHistory([]); setActiveChatId(null); 
   };
 
   const performServerHandshake = async (user) => {
@@ -209,7 +198,7 @@ export default function App() {
         let rid = activeChatId || (userChats.length > 0 ? userChats[0].id : 1);
         setActiveChatId(rid); setIsAuthenticated(true); setIsServerSleeping(false);
       } else { setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) setActiveChatId(1); }
-    } catch (e) { console.error("Handshake failed:", e); setIsServerSleeping(true); if (history.length === 0) { const fid = 1; setHistory([{ id: fid, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(fid); } }
+    } catch (e) { setIsServerSleeping(true); if (history.length === 0) { const fid = 1; setHistory([{ id: fid, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(fid); } }
   };
 
   const handleAuth = async (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } if (pinInput !== USERS[currentUser].pin) { alert("INCORRECT PIN."); setPinInput(''); return; } setPinInput(''); await performServerHandshake(currentUser); };
@@ -316,10 +305,9 @@ export default function App() {
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]"><span className="font-bold text-[#2d482e]">SYSTEM</span><button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button></div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
-                         <button type="button" onClick={() => { tts.speak("BMO IS AWAKE!"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2">🔊 WAKE AUDIO</button>
-                         <button type="button" onClick={() => { tts.speak("HEARTBEAT OK"); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-purple-600 text-white flex items-center justify-center gap-2">🩺 DEBUG AUDIO</button>
-                         <button type="button" onClick={() => { setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold">🎮 BMO DASHBOARD</button>
-                         <button type="button" onClick={() => { setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold">📟 SYSTEM TERMINAL</button>
+                         <button type="button" onClick={() => { tts.speak("BMO IS AWAKE!"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase">🔊 WAKE AUDIO</button>
+                         <button type="button" onClick={() => setIsDashboardOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase">🎮 BMO DASHBOARD</button>
+                         <button type="button" onClick={() => setIsTerminalOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase">📟 SYSTEM TERMINAL</button>
                          <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
                          <button type="button" onClick={() => setActiveBrain('openclaw')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white' : 'bg-[#b5d6a7]'}`}>🤖 LOCAL BMO</button>
                       </div>
@@ -345,16 +333,8 @@ export default function App() {
                 )}
               </div>
             </div>
-            {/* LABELS & HARDWARE */}
-            <div className="h-28 mt-4 flex justify-between items-center px-2 sm:px-6 relative">
-               <div className="absolute -top-4 left-6 label-font transform -rotate-12 pointer-events-none text-black">UPLOAD</div>
-               <div className="absolute -top-4 left-1/2 -translate-x-1/2 label-font pointer-events-none text-black">PTT</div>
-               <div className="absolute -top-4 right-10 label-font transform rotate-12 pointer-events-none text-black">SEND</div>
-               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
-               <div className="absolute bottom-2 right-12 label-font transform rotate-12 pointer-events-none text-black">ACTION</div>
-            </div>
+            <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
           </div>
-          {/* DASHBOARD RIGHT PANE (Desktop Only) */}
           <div className="hidden lg:flex flex-col h-full overflow-hidden gap-4">
             <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg">
               <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
@@ -370,8 +350,6 @@ export default function App() {
             </div>
           </div>
         </div>
-
-        {/* OVERLAYS for small screens */}
         {isDashboardOverlayOpen && (
           <div className="fixed inset-0 bg-[#5acbb5] z-[100] flex flex-col p-4 animate-in slide-in-from-bottom duration-300 overflow-y-auto border-t-8 border-[#2d482e]">
             <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#5acbb5] py-2 z-10 border-b-4 border-[#2d482e]">
