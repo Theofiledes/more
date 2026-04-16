@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Union
 from pydantic import BaseModel
 from git import Repo
+import psutil
 
 app = FastAPI()
 auth_scheme = HTTPBearer()
@@ -20,6 +21,7 @@ class AgentExecutor:
     def __init__(self):
         self.active_process = None
         self.pending_command = None
+        self.current_task = "IDLE"
         self.repo = None
         try:
             self.repo = Repo("/app")
@@ -40,6 +42,7 @@ class AgentExecutor:
         return False
 
     async def run_command(self, cmd: str, broadcast_fn, wait_for_approval=False):
+        self.current_task = f"RUNNING: {cmd[:20]}..."
         if wait_for_approval:
             self.pending_command = cmd
             await broadcast_fn(json.dumps({
@@ -64,7 +67,11 @@ class AgentExecutor:
                 while True:
                     line = await pipe.readline()
                     if not line: break
-                    await broadcast_fn(f"{prefix} {line.decode().strip()}")
+                    msg = line.decode().strip()
+                    # Auto-Healing parser (Objective 4)
+                    if "Error 500" in msg or "Failed to connect" in msg:
+                        await broadcast_fn(f"\u001b[31m[AUTO-REPAIR] Potential network/proxy issue detected. Suggesting 'docker restart openclaw'.\u001b[0m")
+                    await broadcast_fn(f"{prefix} {msg}")
 
             await asyncio.gather(
                 stream_pipe(self.active_process.stdout, ""),
@@ -78,6 +85,7 @@ class AgentExecutor:
         finally:
             self.active_process = None
             self.pending_command = None
+            self.current_task = "IDLE"
 
     def kill(self):
         if self.active_process:
@@ -161,6 +169,15 @@ def save_history(history):
 async def get_telemetry_poll(token: str = Depends(get_token)):
     return {"lines": telemetry_buffer}
 
+@app.get("/v1/system/metrics")
+async def get_system_metrics(token: str = Depends(get_token)):
+    return {
+        "cpu": psutil.cpu_percent(),
+        "ram": psutil.virtual_memory().percent,
+        "task": executor.current_task,
+        "disk": psutil.disk_usage('/').percent
+    }
+
 @app.post("/v1/telemetry/state")
 async def update_telemetry_state(request: Request, token: str = Depends(get_token)):
     global is_safety_stride_active, is_dreaming_active
@@ -238,10 +255,9 @@ async def save_workspace_file(filename: str, file: WorkspaceFile, token: str = D
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, token: str = Depends(get_token)):
     body = await request.json()
-    print(f"Incoming Request for model: {body.get('model')}")
+    executor.current_task = "THINKING..."
     
-    # If no model provided, use moondream as a fast fallback
-    # Otherwise, respect the user's choice (openclaw handles the actual model routing)
+    # Correct ID from openclaw.json
     if not body.get("model") or body.get("model") == "openclaw":
         body["model"] = "moondream"
 
@@ -249,9 +265,7 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
     
     try:
-        print(f"Proxying to OpenClaw: {OPENCLAW_URL} with model {body['model']}")
         response = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=body, headers=headers, timeout=120)
-        if not response.ok: print(f"OpenClaw Proxy Error: {response.status_code} - {response.text}")
         response.raise_for_status()
         data = response.json()
         
@@ -266,8 +280,10 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
             save_history(hist)
         return data
     except Exception as e:
-        print(f"Final Proxy Error: {e}")
+        await broadcast_to_managers(f"\u001b[31m[AUTO-REPAIR] Completions Failed: {e}\u001b[0m")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        executor.current_task = "IDLE"
 
 if __name__ == "__main__":
     import uvicorn

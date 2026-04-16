@@ -1,16 +1,17 @@
 ---
 active: true
 iteration: 1
-max_iterations: 0
-completion_promise: "LOCAL_RAG_MEMORY_ONLINE"
-started_at: "2026-04-14T20:35:49Z"
+max_iterations: 10
+completion_promise: "SYSTEM_METRICS_AND_AUTOHEAL_ONLINE"
+started_at: "2026-04-16T03:44:09Z"
 ---
 
-# Objective: Plain-Text Memory & SQLite RAG
-**Target:** `main.py` and new `memory_manager.py`.
+# Objective: Phase 6 - Advanced System Metrics & Task Visibility
+**Target:** `server.py`, `src/components/TelemetryTerminal.jsx`
 
 **Directives:**
-1. Create `GET` and `PUT` REST endpoints pointing strictly to the Docker `/workspace` so the Android app can read and edit `SOUL.md`, `AGENTS.md`, and `MEMORY.md`.
-2. Implement a lightweight SQLite database using `sqlite-vec`. Embed and store the conversation turns.
-3. Implement Context Injection (RAG): Before sending a prompt to the LLM, perform a vector similarity search on the SQLite DB and inject the top 3 relevant historical facts into the system prompt.
-<promise>LOCAL_RAG_MEMORY_ONLINE</promise>
+1. Install `psutil` in the backend container. Create a `/v1/system/metrics` endpoint returning CPU, RAM, and Temperature data.
+2. Implement a "Current Task" state in the backend that updates whenever a chat completion or tool call starts.
+3. Build a "BMO Status Bar" at the top of the `TelemetryTerminal` showing these real-time stats in hand-drawn style.
+4. Auto-Healing: Add a parser to `server.py` that detects "Error 500" or "Failed to connect" in logs and broadcasts a \u001b[31m[AUTO-REPAIR]\u001b[0m suggestion to the terminal.
+<promise>SYSTEM_METRICS_AND_AUTOHEAL_ONLINE</promise>
