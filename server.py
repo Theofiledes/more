@@ -4,6 +4,7 @@ import requests
 import asyncio
 import signal
 import sys
+import docker
 from fastapi import FastAPI, Request, HTTPException, Depends, status, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,7 @@ import psutil
 
 app = FastAPI()
 auth_scheme = HTTPBearer()
+docker_client = docker.from_env()
 
 class WorkspaceFile(BaseModel):
     content: str
@@ -37,10 +39,8 @@ class AgentExecutor:
                 self.repo.git.add(A=True)
                 if self.repo.is_dirty():
                     self.repo.index.commit("Pre-execution state [BMO_AUTO]")
-                    print("Git checkpoint created.")
                 return True
-            except Exception as e:
-                print(f"Git checkpoint failed: {e}")
+            except: return False
         return False
 
     async def run_command(self, cmd: str, broadcast_fn, wait_for_approval=False):
@@ -67,8 +67,6 @@ class AgentExecutor:
                     line = await pipe.readline()
                     if not line: break
                     msg = line.decode().strip()
-                    if "Error 500" in msg or "Failed to connect" in msg:
-                        await broadcast_fn(f"\u001b[31m[AUTO-REPAIR] Potential network issue detected.\u001b[0m")
                     await broadcast_fn(f"{prefix} {msg}")
             await asyncio.gather(stream_pipe(self.active_process.stdout, ""), stream_pipe(self.active_process.stderr, "\u001b[31m[ERR]\u001b[0m"))
             await self.active_process.wait()
@@ -117,6 +115,32 @@ async def broadcast_to_managers(message: str):
     if len(telemetry_buffer) > 1000: telemetry_buffer.pop(0)
     await manager.broadcast(message)
 
+# --- WATCHDOG SYSTEM ---
+failure_count = 0
+
+async def system_watchdog():
+    global failure_count
+    while True:
+        await asyncio.sleep(60)
+        try:
+            res = requests.get("http://openclaw_agent:18789/v1/chat/history", headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=5)
+            if res.ok:
+                failure_count = 0
+            else:
+                failure_count += 1
+        except:
+            failure_count += 1
+        
+        if failure_count >= 3:
+            await broadcast_to_managers("\u001b[31m[WATCHDOG] OpenClaw unresponsive for 3 mins. ATTEMPTING AUTO-REPAIR...\u001b[0m")
+            try:
+                container = docker_client.containers.get("openclaw_agent")
+                container.restart()
+                failure_count = 0
+                await broadcast_to_managers("\u001b[32m[WATCHDOG] OpenClaw RESTARTED successfully.\u001b[0m")
+            except Exception as e:
+                await broadcast_to_managers(f"\u001b[31m[WATCHDOG] REPAIR FAILED: {e}\u001b[0m")
+
 async def start_heartbeat():
     while True:
         await asyncio.sleep(15)
@@ -125,6 +149,7 @@ async def start_heartbeat():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(start_heartbeat())
+    asyncio.create_task(system_watchdog())
 
 app.add_middleware(
     CORSMiddleware,
@@ -160,6 +185,16 @@ async def health_check():
         status["openclaw"] = "OK" if res.ok else "ERROR"
     except: status["openclaw"] = "OFFLINE"
     return status
+
+@app.post("/v1/system/repair")
+async def manual_repair(token: str = Depends(get_token)):
+    await broadcast_to_managers("\u001b[33m[SYSTEM] Manual Repair Triggered by User.\u001b[0m")
+    try:
+        container = docker_client.containers.get("openclaw_agent")
+        container.restart()
+        return {"status": "success", "message": "Brain restarted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/v1/telemetry")
 async def get_telemetry_poll(token: str = Depends(get_token)):
