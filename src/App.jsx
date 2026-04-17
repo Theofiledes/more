@@ -12,53 +12,27 @@ import { TextToSpeech } from '@capacitor-community/text-to-speech';
 // --- Native TTS Hook ---
 const useNativeTTS = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  
   const speak = useCallback(async (text, onEnd) => {
     if (!text || typeof text !== 'string') return;
-    
     try {
-      console.log("TTS_DEBUG: Attempting Native Speak:", text);
       setIsSpeaking(true);
-      
-      // Stop any current speech
       await TextToSpeech.stop();
-      
-      await TextToSpeech.speak({
-        text: text,
-        lang: 'en-US',
-        rate: 1.0,
-        pitch: 1.2,
-        volume: 1.0,
-        category: 'ambient',
-      });
-      
+      await TextToSpeech.speak({ text, lang: 'en-US', rate: 1.0, pitch: 1.2, volume: 1.0, category: 'ambient' });
       setIsSpeaking(false);
       onEnd?.();
     } catch (e) {
-      console.error("TTS_DEBUG: Native Speak Failed, falling back to Web:", e);
-      
-      // Web Fallback
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.pitch = 1.4;
-        utterance.onend = () => { setIsSpeaking(false); onEnd?.(); };
-        window.speechSynthesis.speak(utterance);
-      } else {
-        setIsSpeaking(false);
-        onEnd?.();
-      }
+        const u = new SpeechSynthesisUtterance(text);
+        u.pitch = 1.4; u.onend = () => { setIsSpeaking(false); onEnd?.(); };
+        window.speechSynthesis.speak(u);
+      } else { setIsSpeaking(false); onEnd?.(); }
     }
   }, []);
-
   const stop = useCallback(async () => {
-    try {
-      await TextToSpeech.stop();
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-    } catch (e) { }
+    try { await TextToSpeech.stop(); if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { }
     setIsSpeaking(false);
   }, []);
-
   return { isSpeaking, speak, stop };
 };
 
@@ -78,15 +52,14 @@ const USERS = { Anthony: { pin: '1234' }, Kayla: { pin: '4321' } };
 const parseToolCall = (text) => {
   if (!text || typeof text !== 'string' || !text.trim().startsWith('{')) return null;
   try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed.tool === 'string') return { tool: parsed.tool, action: parsed.action || null };
+    const p = JSON.parse(text);
+    if (p && typeof p.tool === 'string') return { tool: p.tool, action: p.action || null };
   } catch { }
   return null;
 };
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
-  const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
   const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   if (isDesktopLocal) return "http://localhost:18789";
   return envUrl ? envUrl.replace(/\/$/, "") : "http://100.84.254.37:18789";
@@ -97,14 +70,14 @@ const getApiToken = () => import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-k
 const sendOpenClawCommand = async (command, history = [], image = null, model = "moondream") => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
-  const normalizedCommand = typeof command === 'string' ? command.trim() : '';
-  const resolvedCommand = normalizedCommand || (image ? "Please analyze the attached image." : "Please help with my request.");
-  const userContent = image ? [{ type: "text", text: resolvedCommand }, { type: "image_url", image_url: { url: image } }] : resolvedCommand;
-  const messages = [...history.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') })), { role: 'user', content: userContent }];
+  const nc = typeof command === 'string' ? command.trim() : '';
+  const rc = nc || (image ? "Please analyze the attached image." : "Please help with my request.");
+  const uc = image ? [{ type: "text", text: rc }, { type: "image_url", image_url: { url: image } }] : rc;
+  const msgs = [...history.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') })), { role: 'user', content: uc }];
   try {
-    const response = await fetch(`${apiUrl}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` }, body: JSON.stringify({ model, messages }) });
-    if (!response.ok) throw new Error("Proxy failed");
-    const data = await response.json();
+    const res = await fetch(`${apiUrl}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` }, body: JSON.stringify({ model, messages: msgs }) });
+    if (!res.ok) throw new Error("Proxy failed");
+    const data = await res.json();
     return data.choices?.[0]?.message?.content || null;
   } catch (error) { console.error("OpenClaw failed:", error); return null; }
 };
@@ -113,42 +86,34 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState('Anthony');
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
   const [isServerSleeping, setIsServerSleeping] = useState(false);
-  
   useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
-  
-  const [messages, setMessages] = useState(() => {
-    const saved = localStorage.getItem('bmo_messages');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [messages, setMessages] = useState(() => { const s = localStorage.getItem('bmo_messages'); return s ? JSON.parse(s) : []; });
   useEffect(() => { localStorage.setItem('bmo_messages', JSON.stringify(messages)); }, [messages]);
-
   const [inputText, setInputText] = useState(() => localStorage.getItem('bmo_input_buffer') || '');
   useEffect(() => { localStorage.setItem('bmo_input_buffer', inputText); }, [inputText]);
-
   const [history, setHistory] = useState([]);
-  const [activeChatId, setActiveChatId] = useState(() => {
-    const saved = localStorage.getItem('bmo_active_chat_id');
-    return saved ? parseInt(saved) : null;
-  });
+  const [activeChatId, setActiveChatId] = useState(() => { const s = localStorage.getItem('bmo_active_chat_id'); return s ? parseInt(s) : null; });
   useEffect(() => { if (activeChatId) localStorage.setItem('bmo_active_chat_id', activeChatId); }, [activeChatId]);
+  
+  const [activeModel, setActiveModel] = useState(() => localStorage.getItem('bmo_active_model') || 'moondream');
+  useEffect(() => { localStorage.setItem('bmo_active_model', activeModel); }, [activeModel]);
+  
+  const [safetyStride, setSafetyStride] = useState(() => localStorage.getItem('bmo_safety_stride') !== 'false');
+  useEffect(() => { localStorage.setItem('bmo_safety_stride', safetyStride); }, [safetyStride]);
+
+  const [isDreaming, setIsDreaming] = useState(() => localStorage.getItem('bmo_is_dreaming') === 'true');
+  useEffect(() => { localStorage.setItem('bmo_is_dreaming', isDreaming); }, [isDreaming]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [isEncoding, setIsEncoding] = useState(false);
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
   const [face, setFace] = useState('^_^');
-  
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
   const [useCrtFilter, setUseCrtFilter] = useState(true);
   const [activeBrain, setActiveBrain] = useState('openclaw');
   const [speakingMsgId, setSpeakingMsgId] = useState(null);
-
-  const [activeModel, setActiveModel] = useState(() => localStorage.getItem('bmo_active_model') || 'moondream');
-  useEffect(() => { localStorage.setItem('bmo_active_model', activeModel); }, [activeModel]);
-
-  const [safetyStride, setSafetyStride] = useState(true);
-  const [isDreaming, setIsDreaming] = useState(false);
   const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry');
   const [isTerminalOverlayOpen, setIsTerminalOverlayOpen] = useState(false);
   const [isDashboardOverlayOpen, setIsDashboardOverlayOpen] = useState(false);
@@ -162,6 +127,8 @@ export default function App() {
       try {
         const apiUrl = getApiUrl();
         const apiToken = getApiToken();
+        const gr = await fetch(`${apiUrl}/v1/telemetry/state`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+        if (gr.ok) { const s = await gr.json(); }
         await fetch(`${apiUrl}/v1/telemetry/state`, { method: 'POST', headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ safety_stride: safetyStride, is_dreaming: isDreaming }) });
       } catch (e) { }
     };
@@ -180,70 +147,67 @@ export default function App() {
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
 
-  const handleUserToggle = (user) => { 
-    setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); localStorage.removeItem('bmo_messages'); localStorage.removeItem('bmo_input_buffer');
-    setSpeakingMsgId(null); setCurrentUser(user); setIsServerSleeping(false); setPinInput(''); setIsMenuOpen(false); setMessages([]); setHistory([]); setActiveChatId(null); 
-  };
+  const handleUserToggle = (user) => { setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); localStorage.removeItem('bmo_messages'); localStorage.removeItem('bmo_input_buffer'); setSpeakingMsgId(null); setCurrentUser(user); setIsServerSleeping(false); setPinInput(''); setIsMenuOpen(false); setMessages([]); setHistory([]); setActiveChatId(null); };
 
   const performServerHandshake = async (user) => {
     const apiUrl = getApiUrl();
     const apiToken = getApiToken();
     try {
-      const response = await fetch(`${apiUrl}/v1/chat/history`, { headers: { "Authorization": `Bearer ${apiToken}` } });
-      if (response.ok) {
-        const data = await response.json();
+      const res = await fetch(`${apiUrl}/v1/chat/history`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+      if (res.ok) {
+        const data = await res.json();
         setHistory(data.chats || []);
         if (messages.length === 0) setMessages(data.messages || []);
-        const userChats = (data.chats || []).filter(h => h.user === user);
-        let rid = activeChatId || (userChats.length > 0 ? userChats[0].id : 1);
+        const uc = (data.chats || []).filter(h => h.user === user);
+        let rid = activeChatId || (uc.length > 0 ? uc[0].id : 1);
+        if (history.length === 0 && uc.length === 0) setHistory([{ id: rid, user: user, title: 'NEW SESSION' }]);
         setActiveChatId(rid); setIsAuthenticated(true); setIsServerSleeping(false);
       } else { setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) setActiveChatId(1); }
-    } catch (e) { setIsServerSleeping(true); if (history.length === 0) { const fid = 1; setHistory([{ id: fid, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(fid); } }
+    } catch (e) { setIsServerSleeping(true); if (history.length === 0) { setHistory([{ id: 1, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(1); } }
   };
 
   const handleAuth = async (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } if (pinInput !== USERS[currentUser].pin) { alert("INCORRECT PIN."); setPinInput(''); return; } setPinInput(''); await performServerHandshake(currentUser); };
 
   const retryConnection = async () => { setIsServerSleeping(false); await performServerHandshake(currentUser); };
 
-  const handleNewChat = (userOverride = null) => {
-    const user = userOverride || currentUser;
-    const newId = Math.max(0, ...history.map(h => h.id)) + 1;
-    setHistory([{ id: newId, user: user, title: 'NEW SESSION' }, ...history]);
-    setActiveChatId(newId);
-    setMessages([{ id: Date.now(), chatId: newId, user: user, sender: 'bmo', type: 'text', text: `GREETINGS ${user.toUpperCase()}.` }]);
+  const handleNewChat = (uo = null) => {
+    const u = uo || currentUser;
+    const ni = Math.max(0, ...history.map(h => h.id)) + 1;
+    setHistory([{ id: ni, user: u, title: 'NEW SESSION' }, ...history]);
+    setActiveChatId(ni);
+    setMessages([{ id: Date.now(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}.` }]);
     setIsMenuOpen(false);
   };
 
   const handleSend = async () => {
     if (!isAuthenticated || isLoading) return;
     if (!inputText.trim() && !pendingFile && !pendingImageUrl) return;
-    const currentInput = inputText; const currentImage = pendingImageUrl;
-    let newMsg = { id: Date.now(), chatId: activeChatId, user: currentUser, sender: 'user', text: currentInput, type: 'text' };
-    if (currentImage) { newMsg.type = 'image'; newMsg.imageUrl = currentImage; newMsg.text = currentInput; } else if (pendingFile) { newMsg.type = 'file'; newMsg.fileName = pendingFile.name; }
-    const currentActiveMessages = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
-    setMessages(prev => [...prev, newMsg]); setInputText(''); setPendingFile(null); setPendingImageUrl(null); setIsLoading(true);
-    const formattedHistory = currentActiveMessages.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] }));
-    let bmoResponseText = "BMO COMPUTES COMMAND.";
-    if (activeBrain === 'gemini') { bmoResponseText = await fetchGemini(currentInput, currentImage, formattedHistory); }
-    else { setFace('O_O'); const result = await sendOpenClawCommand(currentInput, currentActiveMessages.slice(-6), currentImage, activeModel); bmoResponseText = result || "BMO is thinking very hard or cannot reach OpenClaw. Please check the local connection! ^_^;"; }
+    const ci = inputText; const cim = pendingImageUrl;
+    let nm = { id: Date.now(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
+    if (cim) { nm.type = 'image'; nm.imageUrl = cim; nm.text = ci; } else if (pendingFile) { nm.type = 'file'; nm.fileName = pendingFile.name; }
+    const cam = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
+    setMessages(prev => [...prev, nm]); setInputText(''); setPendingFile(null); setPendingImageUrl(null); setIsLoading(true);
+    let brt = "BMO COMPUTES COMMAND.";
+    if (activeBrain === 'gemini') { const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] })); brt = await fetchGemini(ci, cim, fh); }
+    else { setFace('O_O'); const res = await sendOpenClawCommand(ci, cam.slice(-6), cim, activeModel); brt = res || "BMO is thinking very hard or cannot reach OpenClaw. Please check the local connection! ^_^;"; }
     setIsLoading(false); setIsHappy(true);
-    const bmoMsgId = Date.now() + 1;
-    const bmoMsg = { id: bmoMsgId, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: bmoResponseText };
-    setMessages(prev => [...prev, bmoMsg]);
-    if (!parseToolCall(bmoResponseText)) { setSpeakingMsgId(bmoMsgId); tts.speak(bmoResponseText, () => setSpeakingMsgId(null)); }
+    const bmi = Date.now() + 1;
+    const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: brt };
+    setMessages(prev => [...prev, bmsg]);
+    if (!parseToolCall(brt)) { setSpeakingMsgId(bmi); tts.speak(brt, () => setSpeakingMsgId(null)); }
     setTimeout(() => setIsHappy(false), 2000);
   };
 
   const deleteLastMessage = () => { setMessages(prev => { const am = prev.filter(m => m.chatId === activeChatId && m.user === currentUser); if (am.length === 0) return prev; const lm = am[am.length - 1].id; return prev.filter(m => m.id !== lm); }); };
 
   const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      if (file.type.startsWith('image/')) {
-        setIsEncoding(true); const reader = new FileReader();
-        reader.onloadend = () => { setPendingImageUrl(reader.result); setPendingFile(null); setIsEncoding(false); setIsEating(true); };
-        reader.onerror = () => setIsEncoding(false); reader.readAsDataURL(file);
-      } else { setPendingFile(file); setPendingImageUrl(null); setIsEating(true); }
+    const f = e.target.files[0];
+    if (f) {
+      if (f.type.startsWith('image/')) {
+        setIsEncoding(true); const r = new FileReader();
+        r.onloadend = () => { setPendingImageUrl(r.result); setPendingFile(null); setIsEncoding(false); setIsEating(true); };
+        r.onerror = () => setIsEncoding(false); r.readAsDataURL(f);
+      } else { setPendingFile(f); setPendingImageUrl(null); setIsEating(true); }
     }
     e.target.value = null;
   };
@@ -258,7 +222,6 @@ export default function App() {
       <style>{fontStyle}</style>
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-2 sm:p-4 font-sans selection:bg-[#2d482e] selection:text-[#b5d6a7]">
         <div className="w-full max-w-md lg:max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6 items-start h-[95vh]">
-          {/* BMO LEFT PANE */}
           <div className="bg-[#5acbb5] w-full h-full rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
             <div className="flex justify-center mb-3"><div className="w-16 h-2 bg-[#2d482e] rounded-full opacity-50"></div></div>
             <div className={`bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden`}>
@@ -305,17 +268,17 @@ export default function App() {
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]"><span className="font-bold text-[#2d482e]">SYSTEM</span><button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button></div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
-                         <button type="button" onClick={() => { tts.speak("BMO IS AWAKE!"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase">🔊 WAKE AUDIO</button>
-                         <button type="button" onClick={() => setIsDashboardOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase">🎮 BMO DASHBOARD</button>
-                         <button type="button" onClick={() => setIsTerminalOverlayOpen(true)} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase">📟 SYSTEM TERMINAL</button>
-                         <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white' : 'bg-gray-300 text-black'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
-                         <button type="button" onClick={() => setActiveBrain('openclaw')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white' : 'bg-[#b5d6a7]'}`}>🤖 LOCAL BMO</button>
+                         <button type="button" onClick={() => { tts.speak("BMO IS AWAKE!"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🔊 WAKE AUDIO</button>
+                         <button type="button" onClick={() => { setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🎮 BMO DASHBOARD</button>
+                         <button type="button" onClick={() => { setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white]">📟 SYSTEM TERMINAL</button>
+                         <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
+                         <button type="button" onClick={() => setActiveBrain('openclaw')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#b5d6a7] shadow-[1px_1px_0_black]'}`}>🤖 LOCAL BMO</button>
                       </div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
-                        <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold uppercase">Accounts</div>
+                        <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold uppercase tracking-widest">Accounts</div>
                         <div className="flex flex-col gap-2 text-xs">
                           {Object.keys(USERS).map(user => (
-                            <button key={user} type="button" onClick={() => handleUserToggle(user)} className={`p-2 rounded border-2 border-[#2d482e] text-left ${currentUser === user ? 'bg-[#007aff] text-white' : 'bg-[#b5d6a7]'}`}>{user.toUpperCase()}</button>
+                            <button key={user} type="button" onClick={() => handleUserToggle(user)} className={`p-2 rounded border-2 border-[#2d482e] text-left ${currentUser === user ? 'bg-[#007aff] text-white shadow-[1px_1px_0_black]' : 'bg-[#b5d6a7] shadow-[1px_1px_0_black]'}`}>{user.toUpperCase()}</button>
                           ))}
                         </div>
                       </div>
@@ -323,7 +286,7 @@ export default function App() {
                         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
                           <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-2 font-bold"><Plus size={16} /> NEW CHAT</button>
                           {activeHistory.map(chat => (
-                            <button key={chat.id} type="button" onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] ${activeChatId === chat.id ? 'bg-[#9fc28e]' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
+                            <button key={chat.id} type="button" onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] shadow-[1px_1px_0_black] ${activeChatId === chat.id ? 'bg-[#9fc28e]' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
                           ))}
                         </div>
                       )}
@@ -333,23 +296,33 @@ export default function App() {
                 )}
               </div>
             </div>
-            <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
+            {/* LABELS & HARDWARE */}
+            <div className="h-28 mt-4 flex justify-between items-center px-2 sm:px-6 relative select-none">
+               <div className="absolute -top-6 left-6 label-font transform -rotate-12 pointer-events-none text-black font-black">UPLOAD</div>
+               <div className="absolute -top-6 left-1/2 -translate-x-1/2 label-font pointer-events-none text-black font-black">PTT</div>
+               <div className="absolute -top-6 right-10 label-font transform rotate-12 pointer-events-none text-black font-black">SEND</div>
+               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
+               <div className="absolute bottom-2 right-12 label-font transform rotate-12 pointer-events-none text-black font-black">ACTION</div>
+            </div>
           </div>
+          {/* DASHBOARD RIGHT PANE (Desktop Only) */}
           <div className="hidden lg:flex flex-col h-full overflow-hidden gap-4">
-            <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg">
+            <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg shadow-inner">
               <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
               <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
             </div>
-            <div className="flex-[2] min-h-0">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
+            <div className="flex-[2] min-h-0 border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-inner">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
               <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} />
-              <Playbook onRunMacro={(prompt) => { setInputText(prompt); }} />
+              <Playbook onRunMacro={(p) => { setInputText(p); }} />
               <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center shadow-lg">
                 <span>SYSTEM STATUS: OPERATIONAL</span><span>PIXEL_FOLD_V2</span>
               </div>
             </div>
           </div>
         </div>
+
+        {/* OVERLAYS for small screens */}
         {isDashboardOverlayOpen && (
           <div className="fixed inset-0 bg-[#5acbb5] z-[100] flex flex-col p-4 animate-in slide-in-from-bottom duration-300 overflow-y-auto border-t-8 border-[#2d482e]">
             <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#5acbb5] py-2 z-10 border-b-4 border-[#2d482e]">
@@ -363,7 +336,7 @@ export default function App() {
               </div>
               <div className="h-[300px] border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-2xl">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
               <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} />
-              <Playbook onRunMacro={(prompt) => { setInputText(prompt); setIsDashboardOverlayOpen(false); }} />
+              <Playbook onRunMacro={(p) => { setInputText(p); setIsDashboardOverlayOpen(false); }} />
             </div>
           </div>
         )}

@@ -68,9 +68,8 @@ class AgentExecutor:
                     line = await pipe.readline()
                     if not line: break
                     msg = line.decode().strip()
-                    # Auto-Healing parser (Objective 4)
                     if "Error 500" in msg or "Failed to connect" in msg:
-                        await broadcast_fn(f"\u001b[31m[AUTO-REPAIR] Potential network/proxy issue detected. Suggesting 'docker restart openclaw'.\u001b[0m")
+                        await broadcast_fn(f"\u001b[31m[AUTO-REPAIR] Potential network issue detected.\u001b[0m")
                     await broadcast_fn(f"{prefix} {msg}")
 
             await asyncio.gather(
@@ -90,41 +89,31 @@ class AgentExecutor:
     def kill(self):
         if self.active_process:
             self.active_process.kill()
-            print("Active subprocess KILLED by SIGINT")
             return True
         return False
 
 executor = AgentExecutor()
 
-# Track active websocket connections
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
-
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-
     async def broadcast(self, message: str):
         for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except:
-                pass
+            try: await connection.send_text(message)
+            except: pass
 
 manager = ConnectionManager()
-
-# Track telemetry in a global buffer for HTTP polling
 telemetry_buffer = []
 
 async def broadcast_to_managers(message: str):
     telemetry_buffer.append(message)
-    if len(telemetry_buffer) > 1000:
-        telemetry_buffer.pop(0)
+    if len(telemetry_buffer) > 1000: telemetry_buffer.pop(0)
     await manager.broadcast(message)
 
 async def start_heartbeat():
@@ -145,7 +134,6 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
-# Configuration
 OPENCLAW_URL = "http://172.18.0.3:18789"
 API_TOKEN = "bmo-secret-key-2026"
 HISTORY_FILE = "history.json"
@@ -157,13 +145,11 @@ def get_token(authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f:
-            return json.load(f)
+        with open(HISTORY_FILE, "r") as f: return json.load(f)
     return {"chats": [], "messages": []}
 
 def save_history(history):
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=2)
+    with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=2)
 
 @app.get("/v1/telemetry")
 async def get_telemetry_poll(token: str = Depends(get_token)):
@@ -177,6 +163,11 @@ async def get_system_metrics(token: str = Depends(get_token)):
         "task": executor.current_task,
         "disk": psutil.disk_usage('/').percent
     }
+
+@app.get("/v1/telemetry/state")
+async def get_telemetry_state(token: str = Depends(get_token)):
+    global is_safety_stride_active, is_dreaming_active
+    return { "safety_stride": is_safety_stride_active, "is_dreaming": is_dreaming_active }
 
 @app.post("/v1/telemetry/state")
 async def update_telemetry_state(request: Request, token: str = Depends(get_token)):
@@ -212,8 +203,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         is_dreaming_active = bool(msg["is_dreaming"])
                         await broadcast_to_managers(f"\u001b[35m[DREAMER] STATE IS {'ACTIVE' if is_dreaming_active else 'INACTIVE'}\u001b[0m")
                     if msg.get("command") == "SIGINT":
-                        if executor.kill():
-                            await broadcast_to_managers("\u001b[31m[KERNEL] INTERRUPT SIGNAL RECEIVED - PROCESS KILLED\u001b[0m")
+                        if executor.kill(): await broadcast_to_managers("\u001b[31m[KERNEL] INTERRUPT SIGNAL RECEIVED\u001b[0m")
                     if msg.get("command") == "test_run":
                         asyncio.create_task(executor.run_command("ls -R /app", broadcast_to_managers, wait_for_approval=is_safety_stride_active))
             except: pass
@@ -257,9 +247,10 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     body = await request.json()
     executor.current_task = "THINKING..."
     
-    # Correct ID from openclaw.json
-    if not body.get("model") or body.get("model") == "openclaw":
-        body["model"] = "moondream"
+    # RESPECT THE REQUESTED MODEL (Fix for Loop 6 'Model Stick')
+    model_to_use = body.get("model", "moondream")
+    if model_to_use == "openclaw": model_to_use = "moondream"
+    body["model"] = "openclaw" # We tell OpenClaw gateway 'openclaw' to target the main agent
 
     await executor.checkpoint()
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
@@ -282,8 +273,7 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     except Exception as e:
         await broadcast_to_managers(f"\u001b[31m[AUTO-REPAIR] Completions Failed: {e}\u001b[0m")
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        executor.current_task = "IDLE"
+    finally: executor.current_task = "IDLE"
 
 if __name__ == "__main__":
     import uvicorn
