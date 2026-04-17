@@ -35,7 +35,7 @@ const TelemetryTerminal = () => {
     if (isDesktopLocal) return "http://localhost:18789";
     const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
     if (envUrl) return envUrl.replace(/\/$/, "");
-    return "http://100.84.254.37:18789";
+    return "http://100.79.150.84:18789";
   };
 
   useEffect(() => {

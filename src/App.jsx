@@ -62,7 +62,7 @@ const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
   const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   if (isDesktopLocal) return "http://localhost:18789";
-  return envUrl ? envUrl.replace(/\/$/, "") : "http://100.84.254.37:18789";
+  return envUrl ? envUrl.replace(/\/$/, "") : "http://100.79.150.84:18789";
 };
 
 const getApiToken = () => import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
