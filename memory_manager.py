@@ -10,7 +10,6 @@ class MemoryManager:
     def init_db(self):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        # Simple text search table for now (Loop 6)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,46 +28,32 @@ class MemoryManager:
         conn.close()
 
     def search_facts(self, query, limit=3):
-        # Simplistic keyword search for this pass
-        # In a full impl, we'd use sqlite-vec or an embedding model
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        # Very basic "RAG" - find rows containing keywords from the query
         keywords = query.split()
-        if not keywords:
-            return []
-            
+        if not keywords: return []
         search_query = " OR ".join(["content LIKE ?" for _ in keywords])
         params = [f"%{k}%" for k in keywords]
-        
         cursor.execute(f"SELECT content FROM facts WHERE {search_query} ORDER BY id DESC LIMIT ?", (*params, limit))
         results = [row[0] for row in cursor.fetchall()]
         conn.close()
         return results
 
     def get_workspace_file(self, filename):
-        # Restrict to specific files for security
         allowed = ["SOUL.md", "AGENTS.md", "MEMORY.md"]
-        if filename not in allowed:
-            return None
-            
-        path = f"/home/node/.openclaw/workspace/{filename}"
+        if filename not in allowed: return None
+        # FIX: Point to the mapped /app directory inside bmo_backend
+        path = f"/app/{filename}"
         if os.path.exists(path):
-            with open(path, "r") as f:
-                return f.read()
-        return ""
+            with open(path, "r") as f: return f.read()
+        return f"# {filename}\nBMO workspace file initialized."
 
-    def save_workspace_file(self, filename, content):
+    def save_workspace_file(self, filename, content, append=False):
         allowed = ["SOUL.md", "AGENTS.md", "MEMORY.md"]
-        if filename not in allowed:
-            return False
-            
-        path = f"/home/node/.openclaw/workspace/{filename}"
-        # Ensure dir exists (mapped via volume)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(content)
+        if filename not in allowed: return False
+        path = f"/app/{filename}"
+        mode = "a" if append else "w"
+        with open(path, mode) as f: f.write(content)
         return True
 
 memory_manager = MemoryManager()

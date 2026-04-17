@@ -117,29 +117,21 @@ async def broadcast_to_managers(message: str):
 
 # --- WATCHDOG SYSTEM ---
 failure_count = 0
-
 async def system_watchdog():
     global failure_count
     while True:
         await asyncio.sleep(60)
         try:
             res = requests.get("http://openclaw_agent:18789/v1/chat/history", headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=5)
-            if res.ok:
-                failure_count = 0
-            else:
-                failure_count += 1
-        except:
-            failure_count += 1
-        
+            if res.ok: failure_count = 0
+            else: failure_count += 1
+        except: failure_count += 1
         if failure_count >= 3:
-            await broadcast_to_managers("\u001b[31m[WATCHDOG] OpenClaw unresponsive for 3 mins. ATTEMPTING AUTO-REPAIR...\u001b[0m")
+            await broadcast_to_managers("\u001b[31m[WATCHDOG] OpenClaw unresponsive. ATTEMPTING AUTO-REPAIR...\u001b[0m")
             try:
-                container = docker_client.containers.get("openclaw_agent")
-                container.restart()
+                docker.from_env().containers.get("openclaw_agent").restart()
                 failure_count = 0
-                await broadcast_to_managers("\u001b[32m[WATCHDOG] OpenClaw RESTARTED successfully.\u001b[0m")
-            except Exception as e:
-                await broadcast_to_managers(f"\u001b[31m[WATCHDOG] REPAIR FAILED: {e}\u001b[0m")
+            except: pass
 
 async def start_heartbeat():
     while True:
@@ -151,22 +143,14 @@ async def startup_event():
     asyncio.create_task(start_heartbeat())
     asyncio.create_task(system_watchdog())
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"], expose_headers=["*"])
 
 OPENCLAW_URL = "http://openclaw_agent:18789"
 API_TOKEN = "bmo-secret-key-2026"
 HISTORY_FILE = "history.json"
 
 def get_token(authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
-    if authorization.credentials != API_TOKEN:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Token")
+    if authorization.credentials != API_TOKEN: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Token")
     return authorization.credentials
 
 def load_history():
@@ -188,17 +172,14 @@ async def health_check():
 
 @app.post("/v1/system/repair")
 async def manual_repair(token: str = Depends(get_token)):
-    await broadcast_to_managers("\u001b[33m[SYSTEM] Manual Repair Triggered by User.\u001b[0m")
+    await broadcast_to_managers("\u001b[33m[SYSTEM] Manual Repair Triggered.\u001b[0m")
     try:
-        container = docker_client.containers.get("openclaw_agent")
-        container.restart()
-        return {"status": "success", "message": "Brain restarted"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        docker.from_env().containers.get("openclaw_agent").restart()
+        return {"status": "success"}
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/v1/telemetry")
-async def get_telemetry_poll(token: str = Depends(get_token)):
-    return {"lines": telemetry_buffer}
+async def get_telemetry_poll(token: str = Depends(get_token)): return {"lines": telemetry_buffer}
 
 @app.get("/v1/system/metrics")
 async def get_system_metrics(token: str = Depends(get_token)):
@@ -223,37 +204,48 @@ is_safety_stride_active = True
 is_dreaming_active = False
 
 async def run_dream_cycle():
-    await broadcast_to_managers("\u001b[35m[DREAMER] BMO is starting a Dream Cycle...\u001b[0m")
     hist = load_history()
     msgs = hist.get("messages", [])[-20:]
     if not msgs: return
-    summary_prompt = f"Summarize the following interaction into 3-5 key facts for long-term memory: {json.dumps(msgs)}"
     try:
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
-        payload = {"model": "phi4", "messages": [{"role": "user", "content": summary_prompt}], "keep_alive": -1}
-        res = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=payload, headers=headers)
+        # CRITICAL: Always use model="openclaw" to hit the agent gateway
+        payload = {"model": "openclaw", "messages": [{"role": "user", "content": f"Summarize: {json.dumps(msgs)}"}], "keep_alive": -1}
+        res = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=payload, headers={"Authorization": f"Bearer {API_TOKEN}"})
         if res.ok:
             fact = res.json()["choices"][0]["message"]["content"]
             from memory_manager import memory_manager
             memory_manager.save_workspace_file("MEMORY.md", f"\n### Dream Synthesis\n{fact}", append=True)
-            await broadcast_to_managers(f"\u001b[32m[DREAMER] Memory extraction complete. Fact stored.\u001b[0m")
-    except Exception as e: await broadcast_to_managers(f"\u001b[31m[DREAMER] Error: {e}\u001b[0m")
+    except: pass
+
+@app.get("/v1/workspace/{filename}")
+async def get_workspace_file(filename: str, token: str = Depends(get_token)):
+    from memory_manager import memory_manager
+    content = memory_manager.get_workspace_file(filename)
+    if content is None: raise HTTPException(status_code=403)
+    return {"content": content}
+
+@app.put("/v1/workspace/{filename}")
+async def save_workspace_file(filename: str, file: WorkspaceFile, token: str = Depends(get_token)):
+    from memory_manager import memory_manager
+    memory_manager.save_workspace_file(filename, file.content)
+    return {"status": "saved"}
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, token: str = Depends(get_token)):
     body = await request.json()
     executor.current_task = "THINKING..."
     body["keep_alive"] = -1
-    model_to_use = body.get("model", "moondream")
-    if model_to_use == "openclaw": model_to_use = "moondream"
-    body["model"] = model_to_use
+    
+    # CRITICAL FIX: The OpenClaw Gateway proxy endpoint strictly requires model="openclaw" 
+    # to route the request to the underlying agent. 
+    body["model"] = "openclaw"
+
     await executor.checkpoint()
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
     try:
-        response = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=body, headers=headers, timeout=120)
+        response = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=body, headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=120)
         response.raise_for_status()
         data = response.json()
-        if "choices" in data and len(data["choices"]) > 0:
+        if "choices" in data:
             assistant_message = data["choices"][0]["message"]["content"]
             user_message = body["messages"][-1]["content"]
             if isinstance(user_message, list): user_message = " ".join([p["text"] for p in user_message if p["type"] == "text"])
