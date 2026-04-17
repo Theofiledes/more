@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2 } from 'lucide-react';
+import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert } from 'lucide-react';
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
@@ -109,6 +109,9 @@ export default function App() {
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
   const [face, setFace] = useState('^_^');
+  
+  // NEW: System Health tracking
+  const [systemHealth, setSystemHealth] = useState({ backend: 'OFFLINE', openclaw: 'OFFLINE' });
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
   const [useCrtFilter, setUseCrtFilter] = useState(true);
@@ -122,13 +125,35 @@ export default function App() {
 
   const tts = useNativeTTS();
 
+  const runDiagnostic = async () => {
+    const apiUrl = getApiUrl();
+    const apiToken = getApiToken();
+    try {
+      const res = await fetch(`${apiUrl}/v1/health`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+      if (res.ok) {
+        const health = await res.json();
+        setSystemHealth(health);
+        setIsServerSleeping(false);
+        return health;
+      }
+    } catch (e) {
+      setSystemHealth({ backend: 'OFFLINE', openclaw: 'OFFLINE' });
+      setIsServerSleeping(true);
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    const interval = setInterval(runDiagnostic, 10000);
+    runDiagnostic();
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     const syncState = async () => {
       try {
         const apiUrl = getApiUrl();
         const apiToken = getApiToken();
-        const gr = await fetch(`${apiUrl}/v1/telemetry/state`, { headers: { "Authorization": `Bearer ${apiToken}` } });
-        if (gr.ok) { const s = await gr.json(); }
         await fetch(`${apiUrl}/v1/telemetry/state`, { method: 'POST', headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ safety_stride: safetyStride, is_dreaming: isDreaming }) });
       } catch (e) { }
     };
@@ -136,13 +161,15 @@ export default function App() {
   }, [safetyStride, isDreaming]);
 
   useEffect(() => {
+    if (systemHealth.openclaw !== 'OK' && systemHealth.backend === 'OK') { setFace('o_o'); return; }
+    if (systemHealth.backend !== 'OK') { setFace('X_X'); return; }
     if (isLoading) { setFace('O_O'); return; }
     if (isHappy) { setFace('\\o/'); return; }
     if (isEating) { setFace('>_<'); const sw = setTimeout(() => setFace('~_~'), 500); const fi = setTimeout(() => setIsEating(false), 1500); return () => { clearTimeout(sw); clearTimeout(fi); }; }
     setFace('^_^');
     const blink = setInterval(() => { setFace('-_-'); setTimeout(() => setFace(p => p === '-_-' ? '^_^' : p), 200); }, 4000 + Math.random() * 2000);
     return () => clearInterval(blink);
-  }, [isLoading, isHappy, isEating]);
+  }, [isLoading, isHappy, isEating, systemHealth]);
 
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
@@ -167,8 +194,6 @@ export default function App() {
   };
 
   const handleAuth = async (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } if (pinInput !== USERS[currentUser].pin) { alert("INCORRECT PIN."); setPinInput(''); return; } setPinInput(''); await performServerHandshake(currentUser); };
-
-  const retryConnection = async () => { setIsServerSleeping(false); await performServerHandshake(currentUser); };
 
   const handleNewChat = (uo = null) => {
     const u = uo || currentUser;
@@ -229,13 +254,15 @@ export default function App() {
                 <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
                   <button type="button" onClick={() => setIsMenuOpen(true)} className="text-[#2d482e] hover:text-[#007aff] transition-colors"><Menu size={20} strokeWidth={3} /></button>
                   <div className="text-lg sm:text-xl font-bold tracking-widest text-[#2d482e]">{face}</div>
-                  <div className="w-5"></div>
+                  <div className="flex gap-2">
+                    {systemHealth.openclaw === 'OK' ? <ShieldCheck size={16} className="text-green-700" /> : <ShieldAlert size={16} className="text-red-700" />}
+                  </div>
                 </header>
                 <div className="flex-1 overflow-hidden flex flex-col relative">
                   {isServerSleeping ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
-                      <div className="text-4xl mb-4">z_z</div><p className="mb-2">ASLEEP...</p>
-                      <button type="button" onClick={retryConnection} className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] transition-all">RETRY</button>
+                      <div className="text-4xl mb-4">z_z</div><p className="mb-2">OFFLINE...</p>
+                      <button type="button" onClick={() => runDiagnostic()} className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] transition-all">RETRY LINK</button>
                     </div>
                   ) : !isAuthenticated ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
@@ -268,7 +295,11 @@ export default function App() {
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]"><span className="font-bold text-[#2d482e]">SYSTEM</span><button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button></div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
-                         <button type="button" onClick={() => { tts.speak("BMO IS AWAKE!"); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🔊 WAKE AUDIO</button>
+                         <button type="button" onClick={async () => { 
+                            const h = await runDiagnostic();
+                            const msg = h?.openclaw === 'OK' ? "BMO IS AWAKE. BRAIN CONNECTION NOMINAL." : "BMO IS AWAKE. BUT MY BRAIN IS DISCONNECTED.";
+                            tts.speak(msg); setIsMenuOpen(false); 
+                         }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🔊 WAKE & SYNC</button>
                          <button type="button" onClick={() => { setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🎮 BMO DASHBOARD</button>
                          <button type="button" onClick={() => { setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white]">📟 SYSTEM TERMINAL</button>
                          <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
