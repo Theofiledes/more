@@ -2,6 +2,8 @@ import os
 import json
 import requests
 import asyncio
+import signal
+import sys
 from fastapi import FastAPI, Request, HTTPException, Depends, status, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,6 +44,12 @@ class AgentExecutor:
         return False
 
     async def run_command(self, cmd: str, broadcast_fn, wait_for_approval=False):
+        # SANDBOX SECURITY: Block escape attempts
+        if ".." in cmd or cmd.startswith("/"):
+             if not cmd.startswith("/app"):
+                await broadcast_fn("\u001b[31m[SENTINEL] Path escape detected. Blocked.\u001b[0m")
+                return
+
         self.current_task = f"RUNNING: {cmd[:20]}..."
         if wait_for_approval:
             self.pending_command = cmd
@@ -88,11 +96,22 @@ class AgentExecutor:
 
     def kill(self):
         if self.active_process:
-            self.active_process.kill()
-            return True
+            try:
+                self.active_process.kill()
+                return True
+            except: pass
         return False
 
 executor = AgentExecutor()
+
+# Cleanup on exit
+def signal_handler(sig, frame):
+    print("Interrupt received, killing subprocesses...")
+    executor.kill()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 class ConnectionManager:
     def __init__(self):
@@ -179,10 +198,41 @@ async def update_telemetry_state(request: Request, token: str = Depends(get_toke
     if "is_dreaming" in msg:
         is_dreaming_active = bool(msg["is_dreaming"])
         await broadcast_to_managers(f"\u001b[35m[DREAMER] STATE IS {'ACTIVE' if is_dreaming_active else 'INACTIVE'}\u001b[0m")
+        if is_dreaming_active:
+            asyncio.create_task(run_dream_cycle())
     return {"status": "updated"}
 
 is_safety_stride_active = True
 is_dreaming_active = False
+
+async def run_dream_cycle():
+    await broadcast_to_managers("\u001b[35m[DREAMER] BMO is starting a Dream Cycle...\u001b[0m")
+    hist = load_history()
+    msgs = hist.get("messages", [])[-20:]
+    if not msgs:
+        await broadcast_to_managers("\u001b[35m[DREAMER] No memories found to synthesize.\u001b[0m")
+        return
+
+    summary_prompt = f"Summarize the following interaction into 3-5 key facts for long-term memory: {json.dumps(msgs)}"
+    
+    try:
+        # Use Phi-4 (via OpenClaw) for the summary
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
+        payload = {
+            "model": "phi4",
+            "messages": [{"role": "user", "content": summary_prompt}],
+            "keep_alive": -1
+        }
+        res = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=payload, headers=headers)
+        if res.ok:
+            fact = res.json()["choices"][0]["message"]["content"]
+            from memory_manager import memory_manager
+            memory_manager.save_workspace_file("MEMORY.md", f"\n### Dream Synthesis ({msgs[0].get('chatId', 'N/A')})\n{fact}", append=True)
+            await broadcast_to_managers(f"\u001b[32m[DREAMER] Memory extraction complete. Fact stored.\u001b[0m")
+        else:
+            await broadcast_to_managers(f"\u001b[31m[DREAMER] Synthesis failed: {res.text}\u001b[0m")
+    except Exception as e:
+        await broadcast_to_managers(f"\u001b[31m[DREAMER] Error: {e}\u001b[0m")
 
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):
@@ -204,8 +254,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         await broadcast_to_managers(f"\u001b[35m[DREAMER] STATE IS {'ACTIVE' if is_dreaming_active else 'INACTIVE'}\u001b[0m")
                     if msg.get("command") == "SIGINT":
                         if executor.kill(): await broadcast_to_managers("\u001b[31m[KERNEL] INTERRUPT SIGNAL RECEIVED\u001b[0m")
-                    if msg.get("command") == "test_run":
-                        asyncio.create_task(executor.run_command("ls -R /app", broadcast_to_managers, wait_for_approval=is_safety_stride_active))
             except: pass
         asyncio.create_task(listen_for_commands())
         while True: await asyncio.sleep(10)
@@ -247,10 +295,13 @@ async def chat_completions(request: Request, token: str = Depends(get_token)):
     body = await request.json()
     executor.current_task = "THINKING..."
     
-    # RESPECT THE REQUESTED MODEL (Fix for Loop 6 'Model Stick')
+    # HOT-IDLE: Keep model in VRAM (RTX 3050 Optimization)
+    body["keep_alive"] = -1
+
+    # MODEL ROUTING
     model_to_use = body.get("model", "moondream")
     if model_to_use == "openclaw": model_to_use = "moondream"
-    body["model"] = "openclaw" # We tell OpenClaw gateway 'openclaw' to target the main agent
+    body["model"] = model_to_use
 
     await executor.checkpoint()
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {API_TOKEN}"}
