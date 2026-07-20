@@ -232,14 +232,26 @@ def build_system_prompt():
     facts = memory_manager.get_recent_facts_summary(limit=3)
     return f"{soul}\n\n### RECENT MEMORY FACTS:\n{facts}"
 
+@app.get("/v1/models")
+async def list_models(token: str = Depends(get_token)):
+    try:
+        res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        if res.ok:
+            models = [m["name"] for m in res.json().get("models", [])]
+            return {"models": models}
+    except Exception:
+        pass
+    return {"models": [get_available_model()]}
+
 @app.post("/v1/chat/completions")
 async def chat(request: Request, token: str = Depends(get_token)):
     body = await request.json()
     executor.current_task = "THINKING"
 
     target_model = body.get("model")
-    if not target_model or target_model == "openclaw":
-        target_model = get_available_model()
+    available_model = get_available_model()
+    if not target_model or target_model in ["openclaw", "gemma4:e2b", "moondream"]:
+        target_model = available_model
 
     incoming_messages = body.get("messages", [])
 
@@ -262,11 +274,16 @@ async def chat(request: Request, token: str = Depends(get_token)):
 
     try:
         res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
+        if not res.ok and target_model != available_model:
+            # Fall back to default available model if specific target_model was 404
+            payload["model"] = available_model
+            res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
         res.raise_for_status()
         return res.json()
     except Exception as e:
         await broadcast_to_managers(f"\u001b[31m[ERROR] Ollama Brain Error: {e}\u001b[0m")
         raise HTTPException(status_code=500, detail=str(e))
+
     finally:
         executor.current_task = "IDLE"
 

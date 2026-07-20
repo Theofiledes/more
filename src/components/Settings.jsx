@@ -1,17 +1,34 @@
-import React, { useState } from 'react';
-import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw, Bug, Link, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw, Bug, Link, Volume2, VolumeX } from 'lucide-react';
 import * as Sentry from "@sentry/capacitor";
 
-const APP_VERSION = "v7.0.0-OLLAMA";
+const APP_VERSION = "v7.1.0-DYNAMIC";
 
-const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, isDreaming, setIsDreaming, getApiUrl, getApiToken }) => {
-  const models = [
-    { id: 'ornith:9b', label: 'ORNITH-9B (Ollama Local)', desc: 'BMO Primary Local Brain (Qwen 3.5 9B)', icon: <Zap size={14} /> },
-    { id: 'gemma4:e2b', label: 'GEMMA-4', desc: 'Gemma 4 e2b Cloud / Local', icon: <Zap size={14} /> },
-    { id: 'llama3.2:3b', label: 'LLAMA-3.2 (3B)', desc: 'Lightweight Fast local model', icon: <Zap size={14} /> }
-  ];
-
+const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, isDreaming, setIsDreaming, autoSpeak, setAutoSpeak, getApiUrl, getApiToken }) => {
+  const [dynamicModels, setDynamicModels] = useState([]);
   const [customUrl, setCustomUrl] = useState(() => localStorage.getItem('bmo_custom_api_url') || '');
+
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        const apiUrl = getApiUrl();
+        const apiToken = getApiToken();
+        const res = await fetch(`${apiUrl}/v1/models`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.models && data.models.length > 0) {
+            setDynamicModels(data.models);
+            if (!activeModel || !data.models.includes(activeModel)) {
+              setActiveModel(data.models[0]);
+            }
+          }
+        }
+      } catch (e) {
+        setDynamicModels(['ornith:9b']);
+      }
+    };
+    fetchModels();
+  }, [getApiUrl, getApiToken, activeModel, setActiveModel]);
 
   const handleSaveUrl = (e) => {
     const val = e.target.value;
@@ -31,7 +48,7 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         method: 'POST',
         headers: { "Authorization": `Bearer ${apiToken}` }
       });
-      if (res.ok) alert("REPAIR SIGNAL SENT: Brain connection refreshed.");
+      if (res.ok) alert("REPAIR SIGNAL SENT: Connection refreshed.");
       else alert("REPAIR SIGNAL SENT.");
     } catch (e) { alert("REPAIR FAILED: Link is down."); }
   };
@@ -75,30 +92,47 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         </div>
       </div>
 
-      {/* MODEL SELECTION */}
+      {/* DYNAMIC MODEL SELECTION */}
       <div className="flex flex-col gap-2">
-        <div className="text-[8px] opacity-70 uppercase tracking-widest">Active Local Brain</div>
+        <div className="text-[8px] opacity-70 uppercase tracking-widest">Active Neural Engine (Dynamic)</div>
         <div className="relative">
           <select 
-            value={activeModel}
+            value={activeModel || (dynamicModels[0] || 'ornith:9b')}
             onChange={(e) => setActiveModel(e.target.value)}
             className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[10px] p-2 rounded appearance-none focus:outline-none focus:ring-2 focus:ring-[#007aff] cursor-pointer font-bold"
           >
-            {models.map(m => (
-              <option key={m.id} value={m.id}>{m.label}</option>
-            ))}
+            {dynamicModels.length > 0 ? (
+              dynamicModels.map(m => (
+                <option key={m} value={m}>{m.toUpperCase()}</option>
+              ))
+            ) : (
+              <option value="ornith:9b">ORNITH:9B (DEFAULT)</option>
+            )}
           </select>
           <div className="absolute right-2 top-2.5 pointer-events-none">
             <ChevronDown size={14} />
           </div>
         </div>
         <div className="text-[6px] bg-[#2d482e]/10 p-1 rounded italic text-center text-[#2d482e]">
-          {models.find(m => m.id === activeModel)?.desc || 'Ollama Local Engine'}
+          Active Model: <span className="font-bold">{activeModel || 'ornith:9b'}</span>
         </div>
       </div>
 
-      {/* GUARDIAN PROTOCOL */}
+      {/* AUTO SPEAK TTS TOGGLE */}
       <div className="flex items-center justify-between gap-4 mt-1">
+        <div className="flex flex-col">
+          <span className="text-[8px] font-bold flex items-center gap-1">
+            {autoSpeak ? <Volume2 size={12} /> : <VolumeX size={12} />} AUTO-SPEAK VOICE
+          </span>
+          <span className="text-[6px] opacity-60">READ RESPONSES OUT LOUD</span>
+        </div>
+        <button type="button" onClick={() => setAutoSpeak(!autoSpeak)} className={`w-10 h-5 rounded-full border-2 border-[#2d482e] transition-all relative ${autoSpeak ? 'bg-[#007aff]' : 'bg-gray-400'}`}>
+          <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full border border-[#2d482e] transition-all ${autoSpeak ? 'left-5' : 'left-0.5'}`}></div>
+        </button>
+      </div>
+
+      {/* GUARDIAN PROTOCOL */}
+      <div className="flex items-center justify-between gap-4">
         <div className="flex flex-col">
           <span className="text-[8px] font-bold">GUARDIAN PROTOCOL</span>
           <span className="text-[6px] opacity-60">MANUAL ACTION GATE</span>

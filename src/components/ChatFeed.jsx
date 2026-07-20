@@ -179,34 +179,56 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
               </span>
 
               {/* TTS Controls */}
-              {msg.sender === 'bmo' && !toolData && speakingMsgId === msg.id && (
+              {msg.sender === 'bmo' && !toolData && (
                 <div className="flex gap-2 mt-1">
-                  {tts.isPaused ? (
-                    <button
-                      type="button"
-                      onClick={tts.resume}
-                      className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#007aff] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
-                    >
-                      <Play size={8} fill="currentColor" /> PLAY
-                    </button>
+                  {speakingMsgId === msg.id ? (
+                    <>
+                      {tts.isPaused ? (
+                        <button
+                          type="button"
+                          onClick={tts.resume}
+                          className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#007aff] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
+                        >
+                          <Play size={8} fill="currentColor" /> PLAY
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={tts.pause}
+                          className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ffcc00] text-[#2d482e] border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
+                        >
+                          <Square size={8} fill="currentColor" /> PAUSE
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { tts.stop(); setSpeakingMsgId(null); }}
+                        className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
+                      >
+                        <StopCircle size={8} /> STOP
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
-                      onClick={tts.pause}
-                      className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ffcc00] text-[#2d482e] border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
+                      onClick={() => {
+                        const clean = (msg.text || '')
+                          .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+                          .replace(/[*_#>`~]/g, '')
+                          .trim();
+                        if (clean) {
+                          setSpeakingMsgId(msg.id);
+                          tts.speak(clean, () => setSpeakingMsgId(null));
+                        }
+                      }}
+                      className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#9fc28e] text-[#2d482e] border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] opacity-80 hover:opacity-100 font-bold"
                     >
-                      <Square size={8} fill="currentColor" /> PAUSE
+                      <Play size={8} /> READ ALOUD
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => { tts.stop(); setSpeakingMsgId(null); }}
-                    className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
-                  >
-                    <StopCircle size={8} /> STOP
-                  </button>
                 </div>
               )}
+
             </div>
           );
         })

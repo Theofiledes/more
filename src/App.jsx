@@ -129,6 +129,18 @@ export default function App() {
   const [isDashboardOverlayOpen, setIsDashboardOverlayOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(() => localStorage.getItem('bmo_auto_speak') === 'true');
+  useEffect(() => { localStorage.setItem('bmo_auto_speak', autoSpeak); }, [autoSpeak]);
+
+  const cleanTextForTts = (text) => {
+    if (!text) return '';
+    return text
+      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+      .replace(/[*_#>`~]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
 
   const tts = useNativeTTS();
 
@@ -230,9 +242,16 @@ export default function App() {
     const bmi = Date.now() + Math.random();
     const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: brt };
     setMessages(prev => [...prev, bmsg]);
-    if (!parseToolCall(brt)) { setSpeakingMsgId(bmi); tts.speak(brt, () => setSpeakingMsgId(null)); }
+    if (autoSpeak && !parseToolCall(brt)) {
+      const speech = cleanTextForTts(brt);
+      if (speech) {
+        setSpeakingMsgId(bmi);
+        tts.speak(speech, () => setSpeakingMsgId(null));
+      }
+    }
     setTimeout(() => setIsHappy(false), 2000);
   };
+
 
   const deleteLastMessage = () => { setMessages(prev => { const am = prev.filter(m => m.chatId === activeChatId && m.user === currentUser); if (am.length === 0) return prev; const lm = am[am.length - 1].id; return prev.filter(m => m.id !== lm); }); };
 
@@ -361,7 +380,7 @@ export default function App() {
             </div>
             <div className="flex-[2] min-h-0 border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-inner">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} getApiUrl={getApiUrl} getApiToken={getApiToken} />
               <Playbook onRunMacro={(p) => { setInputText(p); }} />
               <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center shadow-lg">
                 <span>SYSTEM STATUS: OPERATIONAL</span><span>PIXEL_FOLD_V2</span>
@@ -383,7 +402,7 @@ export default function App() {
                 <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
               </div>
               <div className="h-[300px] border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-2xl">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} getApiUrl={getApiUrl} getApiToken={getApiToken} />
               <Playbook onRunMacro={(p) => { setInputText(p); setIsDashboardOverlayOpen(false); }} />
             </div>
           </div>
