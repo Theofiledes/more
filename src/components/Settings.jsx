@@ -1,18 +1,25 @@
-import React from 'react';
-import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw, Bug } from 'lucide-react';
+import React, { useState } from 'react';
+import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw, Bug, Link } from 'lucide-react';
 import * as Sentry from "@sentry/capacitor";
 
 const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, isDreaming, setIsDreaming, getApiUrl, getApiToken }) => {
   const models = [
-    { id: 'gemma4:e2b', label: 'GEMMA-4', desc: 'BMO Primary Brain (128K Context)', icon: <Zap size={14} /> }
+    { id: 'ornith:9b', label: 'ORNITH-9B (Ollama Local)', desc: 'BMO Primary Local Brain (Qwen 3.5 9B)', icon: <Zap size={14} /> },
+    { id: 'gemma4:e2b', label: 'GEMMA-4', desc: 'Gemma 4 e2b Cloud / Local', icon: <Zap size={14} /> },
+    { id: 'llama3.2:3b', label: 'LLAMA-3.2 (3B)', desc: 'Lightweight Fast local model', icon: <Zap size={14} /> }
   ];
 
-  // Force Gemma as active if it's not already
-  React.useEffect(() => {
-    if (activeModel !== 'gemma4:e2b') {
-      setActiveModel('gemma4:e2b');
+  const [customUrl, setCustomUrl] = useState(() => localStorage.getItem('bmo_custom_api_url') || '');
+
+  const handleSaveUrl = (e) => {
+    const val = e.target.value;
+    setCustomUrl(val);
+    if (val.trim()) {
+      localStorage.setItem('bmo_custom_api_url', val.trim());
+    } else {
+      localStorage.removeItem('bmo_custom_api_url');
     }
-  }, [activeModel, setActiveModel]);
+  };
 
   const handleRepair = async () => {
     try {
@@ -22,7 +29,8 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         method: 'POST',
         headers: { "Authorization": `Bearer ${apiToken}` }
       });
-      if (res.ok) alert("REPAIR SIGNAL SENT: Brain is restarting.");
+      if (res.ok) alert("REPAIR SIGNAL SENT: Connection refreshed.");
+      else alert("REPAIR SIGNAL SENT.");
     } catch (e) { alert("REPAIR FAILED: Link is down."); }
   };
 
@@ -38,8 +46,25 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
 
   return (
     <div className="flex flex-col gap-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e]">
-      <div className="text-[10px] font-bold border-b-2 border-[#2d482e] pb-1 flex items-center gap-2">
+      <div className="text-[10px] font-bold border-b-2 border-[#2d482e] pb-1 flex items-center gap-2 uppercase">
         <Shield size={14} /> SYSTEM CONFIG
+      </div>
+
+      {/* SERVER URL CONFIG */}
+      <div className="flex flex-col gap-1">
+        <div className="text-[8px] opacity-70 uppercase tracking-widest flex items-center gap-1">
+          <Link size={10} /> SERVER ADDRESS (TAILSCALE / LOCAL)
+        </div>
+        <input
+          type="text"
+          value={customUrl}
+          onChange={handleSaveUrl}
+          placeholder="http://100.84.254.37:18789"
+          className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[9px] p-2 rounded focus:outline-none focus:ring-2 focus:ring-[#007aff]"
+        />
+        <div className="text-[6px] opacity-60">
+          Current Active URL: <span className="font-mono font-bold">{getApiUrl()}</span>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -48,7 +73,7 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
           <select 
             value={activeModel}
             onChange={(e) => setActiveModel(e.target.value)}
-            className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[10px] p-2 rounded appearance-none focus:outline-none focus:ring-2 focus:ring-[#007aff] cursor-pointer"
+            className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[10px] p-2 rounded appearance-none focus:outline-none focus:ring-2 focus:ring-[#007aff] cursor-pointer font-bold"
           >
             {models.map(m => (
               <option key={m.id} value={m.id}>{m.label}</option>
@@ -59,7 +84,7 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
           </div>
         </div>
         <div className="text-[6px] bg-[#2d482e]/10 p-1 rounded italic text-center text-[#2d482e]">
-          {models.find(m => m.id === activeModel)?.desc || 'Gemma-4 Turbo'}
+          {models.find(m => m.id === activeModel)?.desc || 'Ollama Local Engine'}
         </div>
       </div>
 
@@ -87,15 +112,15 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         <button 
           type="button" 
           onClick={handleRepair}
-          className="w-full py-3 bg-[#ff3b30] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[8px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none"
+          className="w-full py-3 bg-[#ff3b30] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[8px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none uppercase"
         >
-          <RefreshCw size={12} /> FORCE BRAIN REPAIR
+          <RefreshCw size={12} /> RECONNECT BRAIN LINK
         </button>
         
         <button 
           type="button" 
           onClick={testSentry}
-          className="w-full py-2 bg-[#007aff] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[7px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none"
+          className="w-full py-2 bg-[#007aff] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[7px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none uppercase"
         >
           <Bug size={10} /> FORCE SENTRY TEST
         </button>

@@ -59,11 +59,15 @@ const parseToolCall = (text) => {
 };
 
 const getApiUrl = () => {
+  const customUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('bmo_custom_api_url') : null;
+  if (customUrl) return customUrl.replace(/\/$/, "");
   const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+  if (envUrl) return envUrl.replace(/\/$/, "");
   const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   if (isDesktopLocal) return "http://localhost:18789";
-  return envUrl ? envUrl.replace(/\/$/, "") : "http://100.79.150.84:18789";
+  return "http://100.84.254.37:18789";
 };
+
 
 const getApiToken = () => import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
 
@@ -145,10 +149,11 @@ export default function App() {
   };
 
   useEffect(() => {
-    const interval = setInterval(runDiagnostic, 10000);
+    const interval = setInterval(runDiagnostic, 3000);
     runDiagnostic();
     return () => clearInterval(interval);
   }, []);
+
 
   useEffect(() => {
     const syncState = async () => {

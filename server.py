@@ -197,6 +197,25 @@ async def repair(token: str = Depends(get_token)):
     await broadcast_to_managers("\u001b[33m[SYSTEM] Self-repair initiated...\u001b[0m")
     return {"status": "ok", "message": "Ollama connection refreshed"}
 
+@app.post("/v1/system/dream")
+async def trigger_dream(token: str = Depends(get_token)):
+    await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Manual dream command triggered...\u001b[0m")
+    try:
+        if os.path.exists("history.json"):
+            with open("history.json", "r") as f:
+                hist = json.load(f)
+            msgs = hist.get("messages", [])
+            text_sample = " ".join([m.get("text", "") for m in msgs[-15:] if m.get("text")])
+            if text_sample:
+                fact = f"Distilled Fact ({len(msgs)} msgs): {text_sample[:120]}..."
+                memory_manager.add_fact(fact)
+                memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
+                return {"status": "ok", "message": "Dream Synthesis complete!", "fact": fact}
+        return {"status": "ok", "message": "Dream Synthesis complete!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/v1/telemetry")
 async def telemetry(token: str = Depends(get_token)): return {"lines": telemetry_buffer}
 
