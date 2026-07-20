@@ -298,11 +298,55 @@ async def save_wf(f: str, file: WorkspaceFile, token: str = Depends(get_token)):
     memory_manager.save_workspace_file(f, file.content)
     return {"status": "saved"}
 
+class HistoryPayload(BaseModel):
+    chats: Optional[List[dict]] = []
+    messages: Optional[List[dict]] = []
+
 @app.get("/v1/chat/history")
 async def get_hist(token: str = Depends(get_token)):
     if os.path.exists("history.json"):
         with open("history.json", "r") as f: return json.load(f)
     return {"chats": [], "messages": []}
+
+@app.post("/v1/chat/history")
+async def save_hist(payload: HistoryPayload, token: str = Depends(get_token)):
+    try:
+        with open("history.json", "w") as f:
+            json.dump({"chats": payload.chats, "messages": payload.messages}, f, indent=2)
+        return {"status": "saved"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/v1/git/status")
+async def git_status(token: str = Depends(get_token)):
+    try:
+        proc = await asyncio.create_subprocess_shell("git status --short", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await proc.communicate()
+        return {"status": stdout.decode().strip() or "Clean working tree"}
+    except Exception as e:
+        return {"status": f"Error: {e}"}
+
+@app.get("/v1/git/diff")
+async def git_diff(token: str = Depends(get_token)):
+    try:
+        proc = await asyncio.create_subprocess_shell("git diff", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await proc.communicate()
+        return {"diff": stdout.decode().strip() or "No uncommitted diff"}
+    except Exception as e:
+        return {"diff": f"Error: {e}"}
+
+@app.post("/v1/git/push")
+async def git_push(token: str = Depends(get_token)):
+    await broadcast_to_managers("\u001b[33m[GIT PUSH] Pushing checkpoint to remote repository...\u001b[0m")
+    try:
+        proc = await asyncio.create_subprocess_shell("git add . && git commit -m 'checkpoint: remote update via BMO' && git push origin main", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await proc.communicate()
+        output = stdout.decode().strip() + "\n" + stderr.decode().strip()
+        await broadcast_to_managers(f"\u001b[32m[GIT PUSH] Result: {output[:100]}\u001b[0m")
+        return {"status": "pushed", "output": output}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @app.post("/v1/approve")
 async def approve_cmd(token: str = Depends(get_token)):

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2 } from 'lucide-react';
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
@@ -216,14 +216,42 @@ export default function App() {
 
   const handleAuth = async (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } if (pinInput !== USERS[currentUser].pin) { alert("INCORRECT PIN."); setPinInput(''); return; } setPinInput(''); await performServerHandshake(currentUser); };
 
+  const saveServerHistory = async (newChats, newMsgs) => {
+    try {
+      const apiUrl = getApiUrl();
+      const apiToken = getApiToken();
+      await fetch(`${apiUrl}/v1/chat/history`, {
+        method: 'POST',
+        headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ chats: newChats, messages: newMsgs })
+      });
+    } catch (e) { }
+  };
+
   const handleNewChat = (uo = null) => {
     const u = uo || currentUser;
-    const ni = Math.max(0, ...history.map(h => h.id)) + 1;
-    setHistory([{ id: ni, user: u, title: 'NEW SESSION' }, ...history]);
+    const existingIds = history.map(h => h.id).filter(id => typeof id === 'number');
+    const ni = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
+    const greetingMsg = { id: Date.now() + Math.random(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}! NEW CHAT SESSION READY. 🎮✨` };
+    
+    const updatedHistory = [{ id: ni, user: u, title: `SESSION #${ni}` }, ...history];
+    const updatedMessages = [...messages.filter(m => m.chatId !== ni), greetingMsg];
+    
+    setHistory(updatedHistory);
     setActiveChatId(ni);
-    setMessages([{ id: Date.now() + Math.random(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}.` }]);
+    setMessages(updatedMessages);
     setIsMenuOpen(false);
+    saveServerHistory(updatedHistory, updatedMessages);
   };
+
+  const handleClearActiveChat = () => {
+    if (!activeChatId) return;
+    const updatedMsgs = messages.filter(m => m.chatId !== activeChatId);
+    setMessages(updatedMsgs);
+    setIsMenuOpen(false);
+    saveServerHistory(history, updatedMsgs);
+  };
+
 
   const handleSend = async () => {
     if (!isAuthenticated || isLoading || isSendingRef.current) return;
@@ -351,12 +379,14 @@ export default function App() {
                       </div>
                       {isAuthenticated && (
                         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-                          <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-2 font-bold"><Plus size={16} /> NEW CHAT</button>
+                          <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-1 font-bold text-xs"><Plus size={16} /> NEW CHAT</button>
+                          <button type="button" onClick={() => handleClearActiveChat()} className="w-full p-2 bg-[#ffcc00] text-[#2d482e] border-2 border-[#2d482e] rounded shadow-[1px_1px_0_black] flex items-center justify-center gap-2 mb-2 text-[8px] font-bold uppercase"><Trash2 size={12} /> CLEAR SCREEN BUFFER</button>
                           {activeHistory.map(chat => (
-                            <button key={chat.id} type="button" onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] shadow-[1px_1px_0_black] ${activeChatId === chat.id ? 'bg-[#9fc28e]' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
+                            <button key={chat.id} type="button" onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] shadow-[1px_1px_0_black] ${activeChatId === chat.id ? 'bg-[#9fc28e] font-bold' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
                           ))}
                         </div>
                       )}
+
                     </div>
                     <div className="flex-1 cursor-pointer" onClick={() => setIsMenuOpen(false)}></div>
                   </div>
