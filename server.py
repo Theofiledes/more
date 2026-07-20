@@ -8,6 +8,8 @@ import docker
 from fastapi import FastAPI, Request, HTTPException, Depends, status, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from typing import List, Optional, Union
 from pydantic import BaseModel
 from git import Repo
@@ -20,25 +22,21 @@ docker_client = docker.from_env()
 class WorkspaceFile(BaseModel):
     content: str
 
-# Agent Subprocess Tracking
 class AgentExecutor:
     def __init__(self):
         self.active_process = None
         self.pending_command = None
         self.current_task = "IDLE"
         self.repo = None
-        try:
-            self.repo = Repo("/app")
-        except:
-            print("Git repo not found in /app")
+        try: self.repo = Repo("/app")
+        except: pass
 
     async def checkpoint(self):
         if self.repo:
             try:
                 self.repo.git.config("--global", "--add", "safe.directory", "/app")
                 self.repo.git.add(A=True)
-                if self.repo.is_dirty():
-                    self.repo.index.commit("Pre-execution state [BMO_AUTO]")
+                if self.repo.is_dirty(): self.repo.index.commit("Auto-checkpoint")
                 return True
             except: return False
         return False
@@ -46,33 +44,24 @@ class AgentExecutor:
     async def run_command(self, cmd: str, broadcast_fn, wait_for_approval=False):
         if ".." in cmd or cmd.startswith("/"):
              if not cmd.startswith("/app"):
-                await broadcast_fn("\u001b[31m[SENTINEL] Path escape detected. Blocked.\u001b[0m")
+                await broadcast_fn("\u001b[31m[SENTINEL] Path escape blocked.\u001b[0m")
                 return
-        self.current_task = f"RUNNING: {cmd[:20]}..."
+        self.current_task = f"RUNNING: {cmd[:20]}"
         if wait_for_approval:
             self.pending_command = cmd
-            await broadcast_fn(json.dumps({
-                "tool": "sentinel",
-                "status": "pending",
-                "pending_approval": True,
-                "diff": f"COMMAND: {cmd}\n[WAITING FOR HUMAN PERMISSION...]"
-            }))
+            await broadcast_fn(json.dumps({"tool": "sentinel", "status": "pending", "pending_approval": True, "diff": f"COMMAND: {cmd}"}))
             return
         await self.checkpoint()
         await broadcast_fn(f"\u001b[33m[EXECUTING] {cmd}\u001b[0m")
         try:
             self.active_process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            async def stream_pipe(pipe, prefix):
+            async def stream(pipe, prefix):
                 while True:
                     line = await pipe.readline()
                     if not line: break
-                    msg = line.decode().strip()
-                    await broadcast_fn(f"{prefix} {msg}")
-            await asyncio.gather(stream_pipe(self.active_process.stdout, ""), stream_pipe(self.active_process.stderr, "\u001b[31m[ERR]\u001b[0m"))
+                    await broadcast_fn(f"{prefix} {line.decode().strip()}")
+            await asyncio.gather(stream(self.active_process.stdout, ""), stream(self.active_process.stderr, "\u001b[31m[ERR]\u001b[0m"))
             await self.active_process.wait()
-            await broadcast_fn(f"\u001b[32m[FINISHED] Exit code: {self.active_process.returncode}\u001b[0m")
-        except Exception as e:
-            await broadcast_fn(f"\u001b[31m[EXECUTION_ERROR] {e}\u001b[0m")
         finally:
             self.active_process = None
             self.pending_command = None
@@ -80,185 +69,151 @@ class AgentExecutor:
 
     def kill(self):
         if self.active_process:
-            try:
-                self.active_process.kill()
-                return True
+            try: self.active_process.kill()
             except: pass
-        return False
+        return True
 
 executor = AgentExecutor()
 
-def signal_handler(sig, frame):
-    executor.kill()
-    sys.exit(0)
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
 class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections: self.active_connections.remove(websocket)
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            try: await connection.send_text(message)
+    def __init__(self): self.active_connections: List[WebSocket] = []
+    async def connect(self, ws: WebSocket): await ws.accept(); self.active_connections.append(ws)
+    def disconnect(self, ws: WebSocket): 
+        if ws in self.active_connections: self.active_connections.remove(ws)
+    async def broadcast(self, msg: str):
+        for c in self.active_connections:
+            try: await c.send_text(msg)
             except: pass
 
 manager = ConnectionManager()
 telemetry_buffer = []
 
-async def broadcast_to_managers(message: str):
-    telemetry_buffer.append(message)
+async def broadcast_to_managers(msg: str):
+    telemetry_buffer.append(msg)
     if len(telemetry_buffer) > 1000: telemetry_buffer.pop(0)
-    await manager.broadcast(message)
+    await manager.broadcast(msg)
 
-# --- WATCHDOG SYSTEM ---
+# --- WATCHDOG ---
 failure_count = 0
-async def system_watchdog():
+async def watchdog():
     global failure_count
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(45)
         try:
             res = requests.get("http://openclaw_agent:18789/v1/chat/history", headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=5)
             if res.ok: failure_count = 0
             else: failure_count += 1
         except: failure_count += 1
+        
         if failure_count >= 3:
-            await broadcast_to_managers("\u001b[31m[WATCHDOG] OpenClaw unresponsive. ATTEMPTING AUTO-REPAIR...\u001b[0m")
+            await broadcast_to_managers("\u001b[31m[WATCHDOG] Brain froze. RESTARTING...\u001b[0m")
             try:
                 docker.from_env().containers.get("openclaw_agent").restart()
                 failure_count = 0
             except: pass
 
-async def start_heartbeat():
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(watchdog())
+    asyncio.create_task(heartbeat())
+    asyncio.create_task(pre_warm_brain())
+
+async def pre_warm_brain():
+    await asyncio.sleep(5)
+    await broadcast_to_managers("\u001b[35m[SYSTEM] Pre-warming Gemma-4 into VRAM (Hot-Idle)...\u001b[0m")
+    try:
+        # Pre-warm Gemma-4 (Gemma 4 e2b)
+        res = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", 
+                            json={"model": "openclaw", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1, "keep_alive": -1}, 
+                            headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=60)
+        if res.ok: await broadcast_to_managers("\u001b[32m[SYSTEM] Gemma-4 LOCKED in VRAM. Ready.\u001b[0m")
+    except: pass
+
+async def heartbeat():
     while True:
         await asyncio.sleep(15)
-        await broadcast_to_managers("\u001b[35m[HEARTBEAT] KERNEL IS ALIVE\u001b[0m")
+        await broadcast_to_managers("\u001b[35m[HEARTBEAT] SYSTEM NOMINAL\u001b[0m")
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(start_heartbeat())
-    asyncio.create_task(system_watchdog())
-
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"], expose_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 OPENCLAW_URL = "http://openclaw_agent:18789"
 API_TOKEN = "bmo-secret-key-2026"
-HISTORY_FILE = "history.json"
 
-def get_token(authorization: HTTPAuthorizationCredentials = Depends(auth_scheme)):
-    if authorization.credentials != API_TOKEN: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API Token")
-    return authorization.credentials
-
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r") as f: return json.load(f)
-    return {"chats": [], "messages": []}
-
-def save_history(history):
-    with open(HISTORY_FILE, "w") as f: json.dump(history, f, indent=2)
+def get_token(auth: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+    if auth.credentials != API_TOKEN: raise HTTPException(status_code=401)
+    return auth.credentials
 
 @app.get("/v1/health")
-async def health_check():
-    status = {"backend": "OK", "openclaw": "UNKNOWN"}
+async def health():
+    s = {"backend": "OK", "openclaw": "OFFLINE"}
     try:
-        res = requests.get(f"{OPENCLAW_URL}/v1/chat/history", headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=2)
-        status["openclaw"] = "OK" if res.ok else "ERROR"
-    except: status["openclaw"] = "OFFLINE"
-    return status
+        res = requests.get(f"{OPENCLAW_URL}/v1/chat/history", headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=3)
+        if res.ok: s["openclaw"] = "OK"
+    except: pass
+    return s
 
 @app.post("/v1/system/repair")
-async def manual_repair(token: str = Depends(get_token)):
-    await broadcast_to_managers("\u001b[33m[SYSTEM] Manual Repair Triggered.\u001b[0m")
+async def repair(token: str = Depends(get_token)):
     try:
         docker.from_env().containers.get("openclaw_agent").restart()
-        return {"status": "success"}
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "ok"}
+    except: raise HTTPException(status_code=500)
 
 @app.get("/v1/telemetry")
-async def get_telemetry_poll(token: str = Depends(get_token)): return {"lines": telemetry_buffer}
+async def telemetry(token: str = Depends(get_token)): return {"lines": telemetry_buffer}
 
 @app.get("/v1/system/metrics")
-async def get_system_metrics(token: str = Depends(get_token)):
+async def metrics(token: str = Depends(get_token)):
     return {"cpu": psutil.cpu_percent(), "ram": psutil.virtual_memory().percent, "task": executor.current_task, "disk": psutil.disk_usage('/').percent}
 
-@app.get("/v1/telemetry/state")
-async def get_telemetry_state(token: str = Depends(get_token)):
-    global is_safety_stride_active, is_dreaming_active
-    return { "safety_stride": is_safety_stride_active, "is_dreaming": is_dreaming_active }
-
-@app.post("/v1/telemetry/state")
-async def update_telemetry_state(request: Request, token: str = Depends(get_token)):
-    global is_safety_stride_active, is_dreaming_active
-    msg = await request.json()
-    if "safety_stride" in msg: is_safety_stride_active = bool(msg["safety_stride"])
-    if "is_dreaming" in msg:
-        is_dreaming_active = bool(msg["is_dreaming"])
-        if is_dreaming_active: asyncio.create_task(run_dream_cycle())
-    return {"status": "updated"}
-
-is_safety_stride_active = True
-is_dreaming_active = False
-
-async def run_dream_cycle():
-    hist = load_history()
-    msgs = hist.get("messages", [])[-20:]
-    if not msgs: return
-    try:
-        # CRITICAL: Always use model="openclaw" to hit the agent gateway
-        payload = {"model": "openclaw", "messages": [{"role": "user", "content": f"Summarize: {json.dumps(msgs)}"}], "keep_alive": -1}
-        res = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=payload, headers={"Authorization": f"Bearer {API_TOKEN}"})
-        if res.ok:
-            fact = res.json()["choices"][0]["message"]["content"]
-            from memory_manager import memory_manager
-            memory_manager.save_workspace_file("MEMORY.md", f"\n### Dream Synthesis\n{fact}", append=True)
-    except: pass
-
-@app.get("/v1/workspace/{filename}")
-async def get_workspace_file(filename: str, token: str = Depends(get_token)):
-    from memory_manager import memory_manager
-    content = memory_manager.get_workspace_file(filename)
-    if content is None: raise HTTPException(status_code=403)
-    return {"content": content}
-
-@app.put("/v1/workspace/{filename}")
-async def save_workspace_file(filename: str, file: WorkspaceFile, token: str = Depends(get_token)):
-    from memory_manager import memory_manager
-    memory_manager.save_workspace_file(filename, file.content)
-    return {"status": "saved"}
-
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request, token: str = Depends(get_token)):
+async def chat(request: Request, token: str = Depends(get_token)):
     body = await request.json()
-    executor.current_task = "THINKING..."
-    body["keep_alive"] = -1
+    executor.current_task = "THINKING"
     
-    # CRITICAL FIX: The OpenClaw Gateway proxy endpoint strictly requires model="openclaw" 
-    # to route the request to the underlying agent. 
-    body["model"] = "openclaw"
-
-    await executor.checkpoint()
+    # HARD-IDLE: Force model to stay in VRAM forever
+    body["keep_alive"] = -1
+    body["model"] = "openclaw" 
+    
     try:
-        response = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=body, headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=120)
-        response.raise_for_status()
-        data = response.json()
-        if "choices" in data:
-            assistant_message = data["choices"][0]["message"]["content"]
-            user_message = body["messages"][-1]["content"]
-            if isinstance(user_message, list): user_message = " ".join([p["text"] for p in user_message if p["type"] == "text"])
-            hist = load_history()
-            hist["messages"].append({"id": len(hist["messages"]) + 1, "chatId": 1, "user": "Anthony", "sender": "user", "type": "text", "text": user_message})
-            hist["messages"].append({"id": len(hist["messages"]) + 2, "chatId": 1, "user": "Anthony", "sender": "bmo", "type": "text", "text": assistant_message})
-            save_history(hist)
-        return data
+        res = requests.post(f"{OPENCLAW_URL}/v1/chat/completions", json=body, headers={"Authorization": f"Bearer {API_TOKEN}"}, timeout=180)
+        res.raise_for_status()
+        return res.json()
     except Exception as e:
-        await broadcast_to_managers(f"\u001b[31m[AUTO-REPAIR] Completions Failed: {e}\u001b[0m")
-        raise HTTPException(status_code=500, detail=str(e))
+        await broadcast_to_managers(f"\u001b[31m[ERROR] Brain Timeout: {e}\u001b[0m")
+        raise HTTPException(status_code=500)
     finally: executor.current_task = "IDLE"
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=18789)
+@app.get("/v1/workspace/{f}")
+async def get_wf(f: str, token: str = Depends(get_token)):
+    from memory_manager import memory_manager
+    c = memory_manager.get_workspace_file(f)
+    if c is None: raise HTTPException(status_code=403)
+    return {"content": c}
+
+@app.put("/v1/workspace/{f}")
+async def save_wf(f: str, file: WorkspaceFile, token: str = Depends(get_token)):
+    from memory_manager import memory_manager
+    memory_manager.save_workspace_file(f, file.content)
+    return {"status": "saved"}
+
+@app.get("/v1/chat/history")
+async def get_hist(token: str = Depends(get_token)):
+    if os.path.exists("history.json"):
+        with open("history.json", "r") as f: return json.load(f)
+    return {"chats": [], "messages": []}
+
+# MOUNT UI (Must be last)
+if os.path.exists("dist"):
+    app.mount("/assets", StaticFiles(directory="dist/assets"), name="assets")
+    @app.get("/{full_path:path}")
+    async def serve_ui(full_path: str):
+        if full_path.startswith("v1/"):
+            raise HTTPException(status_code=404)
+        return FileResponse("dist/index.html")
+else:
+    @app.get("/")
+    async def root():
+        return {"status": "BMO KERNEL ACTIVE (UI NOT BUILT)", "version": "6.8.1"}
+
+# Checkpoint

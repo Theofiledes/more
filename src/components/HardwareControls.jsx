@@ -33,8 +33,10 @@ const HardwareControls = ({ onSend, onUploadFile, onOpenCamera, onDeleteLast, on
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+    if (isRecording) {
+      if (mediaRecorderRef.current) {
+        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      }
       setIsRecording(false);
       triggerHaptic();
     }

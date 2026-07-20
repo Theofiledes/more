@@ -105,6 +105,9 @@ export default function App() {
   useEffect(() => { localStorage.setItem('bmo_is_dreaming', isDreaming); }, [isDreaming]);
 
   const [isLoading, setIsLoading] = useState(false);
+  const isSendingRef = useRef(false);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
   const [isEncoding, setIsEncoding] = useState(false);
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
@@ -198,23 +201,24 @@ export default function App() {
     const ni = Math.max(0, ...history.map(h => h.id)) + 1;
     setHistory([{ id: ni, user: u, title: 'NEW SESSION' }, ...history]);
     setActiveChatId(ni);
-    setMessages([{ id: Date.now(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}.` }]);
+    setMessages([{ id: Date.now() + Math.random(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}.` }]);
     setIsMenuOpen(false);
   };
 
   const handleSend = async () => {
-    if (!isAuthenticated || isLoading) return;
+    if (!isAuthenticated || isLoading || isSendingRef.current) return;
     if (!inputText.trim() && !pendingFile && !pendingImageUrl) return;
+    isSendingRef.current = true;
     const ci = inputText; const cim = pendingImageUrl;
-    let nm = { id: Date.now(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
+    let nm = { id: Date.now() + Math.random(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
     if (cim) { nm.type = 'image'; nm.imageUrl = cim; nm.text = ci; } else if (pendingFile) { nm.type = 'file'; nm.fileName = pendingFile.name; }
     const cam = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
     setMessages(prev => [...prev, nm]); setInputText(''); setPendingFile(null); setPendingImageUrl(null); setIsLoading(true);
     let brt = "BMO COMPUTES COMMAND.";
     if (activeBrain === 'gemini') { const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] })); brt = await fetchGemini(ci, cim, fh); }
     else { setFace('O_O'); const res = await sendOpenClawCommand(ci, cam.slice(-6), cim, activeModel); brt = res || "BMO is thinking very hard or cannot reach OpenClaw. Please check the local connection! ^_^;"; }
-    setIsLoading(false); setIsHappy(true);
-    const bmi = Date.now() + 1;
+    setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
+    const bmi = Date.now() + Math.random();
     const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: brt };
     setMessages(prev => [...prev, bmsg]);
     if (!parseToolCall(brt)) { setSpeakingMsgId(bmi); tts.speak(brt, () => setSpeakingMsgId(null)); }
@@ -243,6 +247,8 @@ export default function App() {
   return (
     <>
       <style>{fontStyle}</style>
+      <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileSelect} />
+      <input type="file" ref={cameraInputRef} accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileSelect} />
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-2 sm:p-4 font-sans selection:bg-[#2d482e] selection:text-[#b5d6a7]">
         <div className="w-full max-w-md lg:max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6 items-start h-[95vh]">
           <div className="bg-[#5acbb5] w-full h-full rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
@@ -301,7 +307,7 @@ export default function App() {
                          <button type="button" onClick={() => { setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🎮 BMO DASHBOARD</button>
                          <button type="button" onClick={() => { setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white]">📟 SYSTEM TERMINAL</button>
                          <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
-                         <button type="button" onClick={() => setActiveBrain('openclaw')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#b5d6a7] shadow-[1px_1px_0_black]'}`}>🤖 LOCAL BMO</button>
+                         <button type="button" onClick={() => setActiveBrain(b => b === 'openclaw' ? 'gemini' : 'openclaw')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#007aff] text-white shadow-[1px_1px_0_black]'}`}>{activeBrain === 'openclaw' ? '🤖 LOCAL BMO' : '☁️ GEM BMO'}</button>
                       </div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
                         <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold uppercase tracking-widest">Accounts</div>

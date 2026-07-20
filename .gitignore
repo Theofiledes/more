@@ -23,3 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 venv/
+.aider*
+.env
+__pycache__/
+*.pyc
+

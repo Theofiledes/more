@@ -1,13 +1,18 @@
 import React from 'react';
-import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw } from 'lucide-react';
+import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw, Bug } from 'lucide-react';
+import * as Sentry from "@sentry/capacitor";
 
 const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, isDreaming, setIsDreaming, getApiUrl, getApiToken }) => {
   const models = [
-    { id: 'llama3.2:3b', label: 'STANDARD', desc: 'Llama 3.2 3B', icon: <Cpu size={14} /> },
-    { id: 'phi4', label: 'TURBO', desc: 'Phi-4 Mini (High-Speed)', icon: <Zap size={14} /> },
-    { id: 'moondream', label: 'MOONSHOT', desc: 'Tiny Vision Model', icon: <Sparkles size={14} /> },
-    { id: 'llama3.1:8b', label: 'POWER', desc: 'Llama 3.1 8B', icon: <Activity size={14} /> }
+    { id: 'gemma4:e2b', label: 'GEMMA-4', desc: 'BMO Primary Brain (128K Context)', icon: <Zap size={14} /> }
   ];
+
+  // Force Gemma as active if it's not already
+  React.useEffect(() => {
+    if (activeModel !== 'gemma4:e2b') {
+      setActiveModel('gemma4:e2b');
+    }
+  }, [activeModel, setActiveModel]);
 
   const handleRepair = async () => {
     try {
@@ -19,6 +24,16 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
       });
       if (res.ok) alert("REPAIR SIGNAL SENT: Brain is restarting.");
     } catch (e) { alert("REPAIR FAILED: Link is down."); }
+  };
+
+  const testSentry = () => {
+    alert("Sentry Test: Triggering intentional error...");
+    try {
+      throw new Error("BMO Sentry Diagnostic: " + new Date().toISOString());
+    } catch (e) {
+      Sentry.captureException(e);
+      alert("Error captured and sent to Sentry.");
+    }
   };
 
   return (
@@ -36,15 +51,15 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
             className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[10px] p-2 rounded appearance-none focus:outline-none focus:ring-2 focus:ring-[#007aff] cursor-pointer"
           >
             {models.map(m => (
-              <option key={m.id} value={m.id}>{m.label} ({m.id})</option>
+              <option key={m.id} value={m.id}>{m.label}</option>
             ))}
           </select>
           <div className="absolute right-2 top-2.5 pointer-events-none">
             <ChevronDown size={14} />
           </div>
         </div>
-        <div className="text-[6px] bg-[#2d482e]/10 p-1 rounded italic text-center">
-          {models.find(m => m.id === activeModel)?.desc || 'Custom Model'}
+        <div className="text-[6px] bg-[#2d482e]/10 p-1 rounded italic text-center text-[#2d482e]">
+          {models.find(m => m.id === activeModel)?.desc || 'Gemma-4 Turbo'}
         </div>
       </div>
 
@@ -68,7 +83,7 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         </button>
       </div>
 
-      <div className="border-t-2 border-[#2d482e] pt-3 mt-1">
+      <div className="border-t-2 border-[#2d482e] pt-3 mt-1 flex flex-col gap-2">
         <button 
           type="button" 
           onClick={handleRepair}
@@ -76,7 +91,14 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         >
           <RefreshCw size={12} /> FORCE BRAIN REPAIR
         </button>
-        <div className="text-[6px] text-center mt-2 opacity-60 uppercase">Manual Docker Kick (Use if o_o face appears)</div>
+        
+        <button 
+          type="button" 
+          onClick={testSentry}
+          className="w-full py-2 bg-[#007aff] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[7px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none"
+        >
+          <Bug size={10} /> FORCE SENTRY TEST
+        </button>
       </div>
     </div>
   );
