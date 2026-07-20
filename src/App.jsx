@@ -47,7 +47,8 @@ const fontStyle = `
   .real-vision { border: 2px solid #2d482e; border-radius: 4px; }
 `;
 
-const USERS = { Anthony: { pin: '1234' }, Kayla: { pin: '4321' } };
+const USERS = { Anthony: { pin: '8436' }, Kayla: { pin: '4321' } };
+
 
 const parseToolCall = (text) => {
   if (!text || typeof text !== 'string' || !text.trim().startsWith('{')) return null;
@@ -71,7 +72,7 @@ const getApiUrl = () => {
 
 const getApiToken = () => import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
 
-const sendOpenClawCommand = async (command, history = [], image = null, model = "moondream") => {
+const sendLocalBmoCommand = async (command, history = [], image = null, model = "ornith:9b") => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
   const nc = typeof command === 'string' ? command.trim() : '';
@@ -79,12 +80,13 @@ const sendOpenClawCommand = async (command, history = [], image = null, model = 
   const uc = image ? [{ type: "text", text: rc }, { type: "image_url", image_url: { url: image } }] : rc;
   const msgs = [...history.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') })), { role: 'user', content: uc }];
   try {
-    const res = await fetch(`${apiUrl}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` }, body: JSON.stringify({ model: "openclaw", messages: msgs }) });
-    if (!res.ok) throw new Error("Proxy failed");
+    const res = await fetch(`${apiUrl}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` }, body: JSON.stringify({ model: model || "ornith:9b", messages: msgs }) });
+    if (!res.ok) throw new Error("Local BMO failed");
     const data = await res.json();
     return data.choices?.[0]?.message?.content || null;
-  } catch (error) { console.error("OpenClaw failed:", error); return null; }
+  } catch (error) { console.error("Local BMO request failed:", error); return null; }
 };
+
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState('Anthony');
@@ -142,9 +144,10 @@ export default function App() {
         return health;
       }
     } catch (e) {
-      setSystemHealth({ backend: 'OFFLINE', openclaw: 'OFFLINE' });
+      setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
       setIsServerSleeping(true);
     }
+
     return null;
   };
 
@@ -167,8 +170,8 @@ export default function App() {
   }, [safetyStride, isDreaming]);
 
   useEffect(() => {
-    if (systemHealth.openclaw !== 'OK' && systemHealth.backend === 'OK') { setFace('o_o'); return; }
     if (systemHealth.backend !== 'OK') { setFace('X_X'); return; }
+
     if (isLoading) { setFace('O_O'); return; }
     if (isHappy) { setFace('\\o/'); return; }
     if (isEating) { setFace('>_<'); const sw = setTimeout(() => setFace('~_~'), 500); const fi = setTimeout(() => setIsEating(false), 1500); return () => { clearTimeout(sw); clearTimeout(fi); }; }
@@ -221,7 +224,8 @@ export default function App() {
     setMessages(prev => [...prev, nm]); setInputText(''); setPendingFile(null); setPendingImageUrl(null); setIsLoading(true);
     let brt = "BMO COMPUTES COMMAND.";
     if (activeBrain === 'gemini') { const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] })); brt = await fetchGemini(ci, cim, fh); }
-    else { setFace('O_O'); const res = await sendOpenClawCommand(ci, cam.slice(-6), cim, activeModel); brt = res || "BMO is thinking very hard or cannot reach OpenClaw. Please check the local connection! ^_^;"; }
+    else { setFace('O_O'); const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, activeModel); brt = res || "BMO is computing... If there is no reply, please check local server link! ^_^;"; }
+
     setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
     const bmi = Date.now() + Math.random();
     const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: brt };
@@ -301,19 +305,23 @@ export default function App() {
                 {isMenuOpen && (
                   <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex animate-in fade-in duration-200">
                     <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
-                      <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]"><span className="font-bold text-[#2d482e]">SYSTEM</span><button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button></div>
+                      <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]">
+                        <span className="font-bold text-[#2d482e]">SYSTEM (v7.0.0)</span>
+                        <button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button>
+                      </div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
                          <button type="button" onClick={async () => { 
                             const h = await runDiagnostic();
-                            const msg = h?.openclaw === 'OK' ? "BMO IS AWAKE. BRAIN CONNECTION NOMINAL." : "BMO IS AWAKE. BUT MY BRAIN IS DISCONNECTED.";
+                            const msg = h?.backend === 'OK' ? "BMO IS AWAKE. LOCAL BRAIN NOMINAL." : "BMO IS AWAKE. BUT LOCAL SERVER IS OFFLINE.";
                             tts.speak(msg); setIsMenuOpen(false); 
                          }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🔊 WAKE & SYNC</button>
                          <button type="button" onClick={() => { setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🎮 BMO DASHBOARD</button>
                          <button type="button" onClick={() => { setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white]">📟 SYSTEM TERMINAL</button>
-                         <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-white shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO VISION: {useCrtFilter ? 'ON' : 'OFF'}</button>
-                         <button type="button" onClick={() => setActiveBrain(b => b === 'openclaw' ? 'gemini' : 'openclaw')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${activeBrain === 'openclaw' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#007aff] text-white shadow-[1px_1px_0_black]'}`}>{activeBrain === 'openclaw' ? '🤖 LOCAL BMO' : '☁️ GEM BMO'}</button>
+                         <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-[#2d482e] shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO CRT FILTER: {useCrtFilter ? 'ON' : 'OFF'}</button>
+                         <button type="button" onClick={() => setActiveBrain(b => b === 'local' ? 'gemini' : 'local')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${activeBrain === 'local' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#007aff] text-white shadow-[1px_1px_0_black]'}`}>{activeBrain === 'local' ? '🤖 LOCAL BMO (OLLAMA)' : '☁️ GEM BMO (CLOUD)'}</button>
                       </div>
+
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
                         <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold uppercase tracking-widest">Accounts</div>
                         <div className="flex flex-col gap-2 text-xs">

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw, Bug, Link } from 'lucide-react';
+import { Shield, Cpu, Zap, Activity, ChevronDown, Sparkles, RefreshCw, Bug, Link, CheckCircle2 } from 'lucide-react';
 import * as Sentry from "@sentry/capacitor";
+
+const APP_VERSION = "v7.0.0-OLLAMA";
 
 const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, isDreaming, setIsDreaming, getApiUrl, getApiToken }) => {
   const models = [
@@ -29,7 +31,7 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         method: 'POST',
         headers: { "Authorization": `Bearer ${apiToken}` }
       });
-      if (res.ok) alert("REPAIR SIGNAL SENT: Connection refreshed.");
+      if (res.ok) alert("REPAIR SIGNAL SENT: Brain connection refreshed.");
       else alert("REPAIR SIGNAL SENT.");
     } catch (e) { alert("REPAIR FAILED: Link is down."); }
   };
@@ -46,8 +48,14 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
 
   return (
     <div className="flex flex-col gap-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e]">
-      <div className="text-[10px] font-bold border-b-2 border-[#2d482e] pb-1 flex items-center gap-2 uppercase">
-        <Shield size={14} /> SYSTEM CONFIG
+      {/* VERSION BADGE HEADER */}
+      <div className="flex justify-between items-center border-b-2 border-[#2d482e] pb-2">
+        <div className="text-[10px] font-bold flex items-center gap-2 uppercase">
+          <Shield size={14} /> SYSTEM CONFIG
+        </div>
+        <div className="bg-[#2d482e] text-[#b5d6a7] px-2 py-0.5 rounded text-[8px] font-mono font-bold shadow-[1px_1px_0_white]">
+          {APP_VERSION}
+        </div>
       </div>
 
       {/* SERVER URL CONFIG */}
@@ -63,12 +71,13 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
           className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[9px] p-2 rounded focus:outline-none focus:ring-2 focus:ring-[#007aff]"
         />
         <div className="text-[6px] opacity-60">
-          Current Active URL: <span className="font-mono font-bold">{getApiUrl()}</span>
+          Active Link: <span className="font-mono font-bold">{getApiUrl()}</span>
         </div>
       </div>
 
+      {/* MODEL SELECTION */}
       <div className="flex flex-col gap-2">
-        <div className="text-[8px] opacity-70 uppercase tracking-widest">Active Neural Engine</div>
+        <div className="text-[8px] opacity-70 uppercase tracking-widest">Active Local Brain</div>
         <div className="relative">
           <select 
             value={activeModel}
@@ -88,6 +97,7 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         </div>
       </div>
 
+      {/* GUARDIAN PROTOCOL */}
       <div className="flex items-center justify-between gap-4 mt-1">
         <div className="flex flex-col">
           <span className="text-[8px] font-bold">GUARDIAN PROTOCOL</span>
@@ -98,10 +108,11 @@ const Settings = ({ activeModel, setActiveModel, safetyStride, setSafetyStride, 
         </button>
       </div>
 
+      {/* DREAM STATE */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-col">
           <span className="text-[8px] font-bold">DREAM STATE</span>
-          <span className="text-[6px] opacity-60">AUTONOMOUS ACTING</span>
+          <span className="text-[6px] opacity-60">AUTONOMOUS MEMORY</span>
         </div>
         <button type="button" onClick={() => setIsDreaming(!isDreaming)} className={`w-10 h-5 rounded-full border-2 border-[#2d482e] transition-all relative ${isDreaming ? 'bg-[#ff3b30] animate-pulse' : 'bg-gray-400'}`}>
           <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full border border-[#2d482e] transition-all ${isDreaming ? 'left-5' : 'left-0.5'}`}></div>
