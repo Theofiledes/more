@@ -39,11 +39,18 @@ class MemoryManager:
         conn.close()
         return results
 
+    def _get_path(self, filename):
+        if os.path.exists(filename):
+            return filename
+        app_path = f"/app/{filename}"
+        if os.path.exists(app_path):
+            return app_path
+        return filename
+
     def get_workspace_file(self, filename):
         allowed = ["SOUL.md", "AGENTS.md", "MEMORY.md"]
         if filename not in allowed: return None
-        # FIX: Point to the mapped /app directory inside bmo_backend
-        path = f"/app/{filename}"
+        path = self._get_path(filename)
         if os.path.exists(path):
             with open(path, "r") as f: return f.read()
         return f"# {filename}\nBMO workspace file initialized."
@@ -51,9 +58,19 @@ class MemoryManager:
     def save_workspace_file(self, filename, content, append=False):
         allowed = ["SOUL.md", "AGENTS.md", "MEMORY.md"]
         if filename not in allowed: return False
-        path = f"/app/{filename}"
+        path = self._get_path(filename)
         mode = "a" if append else "w"
         with open(path, mode) as f: f.write(content)
         return True
+
+    def get_recent_facts_summary(self, limit=5):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT content FROM facts ORDER BY id DESC LIMIT ?", (limit,))
+        results = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        if not results:
+            return "No previous facts recorded."
+        return "\n".join([f"- {fact}" for fact in results])
 
 memory_manager = MemoryManager()
