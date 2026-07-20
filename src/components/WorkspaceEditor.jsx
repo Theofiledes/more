@@ -11,7 +11,7 @@ const WorkspaceEditor = () => {
   const files = ['SOUL.md', 'AGENTS.md', 'MEMORY.md'];
 
   const getApiUrl = () => {
-    const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+    const envUrl = import.meta.env.VITE_BMO_API_URL;
     const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
     const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && 
                            (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -28,7 +28,7 @@ const WorkspaceEditor = () => {
     setSaveStatus(null);
     try {
       const apiUrl = getApiUrl();
-      const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
+      const apiToken = import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
       
       const response = await fetch(`${apiUrl}/v1/workspace/${filename}`, {
         headers: { "Authorization": `Bearer ${apiToken}` }
@@ -53,7 +53,7 @@ const WorkspaceEditor = () => {
     setSaveStatus(null);
     try {
       const apiUrl = getApiUrl();
-      const apiToken = import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
+      const apiToken = import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
       
       const response = await fetch(`${apiUrl}/v1/workspace/${activeFile}`, {
         method: 'PUT',

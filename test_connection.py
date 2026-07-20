@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def test_bmo_connection():
-    api_url = os.getenv("VITE_OPENCLAW_API_URL")
-    api_token = os.getenv("VITE_OPENCLAW_API_KEY")
+    api_url = os.getenv("VITE_BMO_API_URL") or "http://localhost:18789"
+    api_token = os.getenv("VITE_BMO_API_KEY") or "bmo-secret-key-2026"
 
     if not api_url or not api_token:
-        print("❌ Error: VITE_OPENCLAW_API_URL or VITE_OPENCLAW_API_KEY missing from .env")
+        print("❌ Error: VITE_BMO_API_URL or VITE_BMO_API_KEY missing from .env")
         return
 
     # Test History Endpoint (Critical for Phase 1)
@@ -35,12 +35,12 @@ def test_bmo_connection():
     except Exception as e:
         print(f"❌ FAIL: History endpoint error: {e}")
 
-    # Test Chat Completions (Proxy to OpenClaw)
+    # Test Chat Completions Endpoint
     chat_url = f"{api_url.rstrip('/')}/v1/chat/completions"
     print(f"\n🔍 Testing Chat at: {chat_url}")
     
     payload = {
-        "model": "openclaw",
+        "model": "ornith:9b",
         "messages": [
             {"role": "user", "content": "PING"}
         ]

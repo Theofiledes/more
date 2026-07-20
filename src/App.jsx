@@ -8,23 +8,33 @@ import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { playClick, playChime, playCheer, playGlitch, playBeep, playCartridge } from './utils/soundEffects';
 
 // --- Native TTS Hook ---
 const useNativeTTS = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const speak = useCallback(async (text, onEnd) => {
+  const speak = useCallback(async (text, onEnd, rate = 1.0, pitch = 1.2) => {
     if (!text || typeof text !== 'string') return;
     try {
       setIsSpeaking(true);
       await TextToSpeech.stop();
-      await TextToSpeech.speak({ text, lang: 'en-US', rate: 1.0, pitch: 1.2, volume: 1.0, category: 'ambient' });
+      await TextToSpeech.speak({
+        text,
+        lang: 'en-US',
+        rate: Number(rate) || 1.0,
+        pitch: Number(pitch) || 1.2,
+        volume: 1.0,
+        category: 'ambient'
+      });
       setIsSpeaking(false);
       onEnd?.();
     } catch (e) {
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
-        u.pitch = 1.4; u.onend = () => { setIsSpeaking(false); onEnd?.(); };
+        u.rate = Number(rate) || 1.0;
+        u.pitch = Number(pitch) || 1.2;
+        u.onend = () => { setIsSpeaking(false); onEnd?.(); };
         window.speechSynthesis.speak(u);
       } else { setIsSpeaking(false); onEnd?.(); }
     }
@@ -40,15 +50,11 @@ const fontStyle = `
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Gaegu:wght@700&display=swap');
   .bmo-font { font-family: 'Press Start 2P', cursive; line-height: 1.4; }
   .label-font { font-family: 'Gaegu', cursive; color: black; font-weight: 900; font-size: 10px; }
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: #b5d6a7; border-left: 1px solid #2d482e; }
-  ::-webkit-scrollbar-thumb { background: #2d482e; }
   .bmo-vision { filter: sepia(1) hue-rotate(75deg) saturate(3) contrast(1.4) brightness(0.9); mix-blend-mode: hard-light; border: 2px solid #2d482e; border-radius: 4px; }
   .real-vision { border: 2px solid #2d482e; border-radius: 4px; }
 `;
 
 const USERS = { Anthony: { pin: '8436' }, Kayla: { pin: '4321' } };
-
 
 const parseToolCall = (text) => {
   if (!text || typeof text !== 'string' || !text.trim().startsWith('{')) return null;
@@ -62,15 +68,14 @@ const parseToolCall = (text) => {
 const getApiUrl = () => {
   const customUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('bmo_custom_api_url') : null;
   if (customUrl) return customUrl.replace(/\/$/, "");
-  const envUrl = import.meta.env.VITE_OPENCLAW_API_URL;
+  const envUrl = import.meta.env.VITE_BMO_API_URL;
   if (envUrl) return envUrl.replace(/\/$/, "");
   const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   if (isDesktopLocal) return "http://localhost:18789";
   return "http://100.84.254.37:18789";
 };
 
-
-const getApiToken = () => import.meta.env.VITE_OPENCLAW_API_KEY || "bmo-secret-key-2026";
+const getApiToken = () => import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
 
 const sendLocalBmoCommand = async (command, history = [], image = null, model = "ornith:9b") => {
   const apiUrl = getApiUrl();
@@ -110,6 +115,15 @@ export default function App() {
   const [isDreaming, setIsDreaming] = useState(() => localStorage.getItem('bmo_is_dreaming') === 'true');
   useEffect(() => { localStorage.setItem('bmo_is_dreaming', isDreaming); }, [isDreaming]);
 
+  const [voiceRate, setVoiceRate] = useState(() => parseFloat(localStorage.getItem('bmo_voice_rate')) || 1.1);
+  useEffect(() => { localStorage.setItem('bmo_voice_rate', voiceRate); }, [voiceRate]);
+
+  const [voicePitch, setVoicePitch] = useState(() => parseFloat(localStorage.getItem('bmo_voice_pitch')) || 1.2);
+  useEffect(() => { localStorage.setItem('bmo_voice_pitch', voicePitch); }, [voicePitch]);
+
+  const [sfxEnabled, setSfxEnabled] = useState(() => localStorage.getItem('bmo_sfx_enabled') !== 'false');
+  useEffect(() => { localStorage.setItem('bmo_sfx_enabled', sfxEnabled); }, [sfxEnabled]);
+
   const [isLoading, setIsLoading] = useState(false);
   const isSendingRef = useRef(false);
   const fileInputRef = useRef(null);
@@ -118,11 +132,11 @@ export default function App() {
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
   const [face, setFace] = useState('^_^');
-  const [systemHealth, setSystemHealth] = useState({ backend: 'OFFLINE', openclaw: 'OFFLINE' });
+  const [systemHealth, setSystemHealth] = useState({ backend: 'OFFLINE', ollama: 'OFFLINE' });
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
   const [useCrtFilter, setUseCrtFilter] = useState(true);
-  const [activeBrain, setActiveBrain] = useState('openclaw');
+  const [activeBrain, setActiveBrain] = useState('local');
   const [speakingMsgId, setSpeakingMsgId] = useState(null);
   const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry');
   const [isTerminalOverlayOpen, setIsTerminalOverlayOpen] = useState(false);
@@ -141,7 +155,6 @@ export default function App() {
       .trim();
   };
 
-
   const tts = useNativeTTS();
 
   const runDiagnostic = async () => {
@@ -159,7 +172,6 @@ export default function App() {
       setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
       setIsServerSleeping(true);
     }
-
     return null;
   };
 
@@ -168,7 +180,6 @@ export default function App() {
     runDiagnostic();
     return () => clearInterval(interval);
   }, []);
-
 
   useEffect(() => {
     const syncState = async () => {
@@ -195,7 +206,21 @@ export default function App() {
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
 
-  const handleUserToggle = (user) => { setIsAuthenticated(false); localStorage.removeItem('bmo_authenticated'); localStorage.removeItem('bmo_messages'); localStorage.removeItem('bmo_input_buffer'); setSpeakingMsgId(null); setCurrentUser(user); setIsServerSleeping(false); setPinInput(''); setIsMenuOpen(false); setMessages([]); setHistory([]); setActiveChatId(null); };
+  const handleUserToggle = (user) => {
+    playClick();
+    setIsAuthenticated(false);
+    localStorage.removeItem('bmo_authenticated');
+    localStorage.removeItem('bmo_messages');
+    localStorage.removeItem('bmo_input_buffer');
+    setSpeakingMsgId(null);
+    setCurrentUser(user);
+    setIsServerSleeping(false);
+    setPinInput('');
+    setIsMenuOpen(false);
+    setMessages([]);
+    setHistory([]);
+    setActiveChatId(null);
+  };
 
   const performServerHandshake = async (user) => {
     const apiUrl = getApiUrl();
@@ -210,11 +235,29 @@ export default function App() {
         let rid = activeChatId || (uc.length > 0 ? uc[0].id : 1);
         if (history.length === 0 && uc.length === 0) setHistory([{ id: rid, user: user, title: 'NEW SESSION' }]);
         setActiveChatId(rid); setIsAuthenticated(true); setIsServerSleeping(false);
-      } else { setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) setActiveChatId(1); }
-    } catch (e) { setIsServerSleeping(true); if (history.length === 0) { setHistory([{ id: 1, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(1); } }
+        playChime();
+      } else {
+        setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) setActiveChatId(1);
+        playChime();
+      }
+    } catch (e) {
+      setIsServerSleeping(true);
+      if (history.length === 0) { setHistory([{ id: 1, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(1); }
+      playGlitch();
+    }
   };
 
-  const handleAuth = async (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } if (pinInput !== USERS[currentUser].pin) { alert("INCORRECT PIN."); setPinInput(''); return; } setPinInput(''); await performServerHandshake(currentUser); };
+  const handleAuth = async (e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    if (pinInput !== USERS[currentUser].pin) {
+      playGlitch();
+      alert("INCORRECT PIN.");
+      setPinInput('');
+      return;
+    }
+    setPinInput('');
+    await performServerHandshake(currentUser);
+  };
 
   const saveServerHistory = async (newChats, newMsgs) => {
     try {
@@ -229,6 +272,7 @@ export default function App() {
   };
 
   const handleNewChat = (uo = null) => {
+    playChime();
     const u = uo || currentUser;
     const existingIds = history.map(h => h.id).filter(id => typeof id === 'number');
     const ni = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
@@ -246,16 +290,17 @@ export default function App() {
 
   const handleClearActiveChat = () => {
     if (!activeChatId) return;
+    playGlitch();
     const updatedMsgs = messages.filter(m => m.chatId !== activeChatId);
     setMessages(updatedMsgs);
     setIsMenuOpen(false);
     saveServerHistory(history, updatedMsgs);
   };
 
-
   const handleSend = async () => {
     if (!isAuthenticated || isLoading || isSendingRef.current) return;
     if (!inputText.trim() && !pendingFile && !pendingImageUrl) return;
+    playBeep();
     isSendingRef.current = true;
     const ci = inputText; const cim = pendingImageUrl;
     let nm = { id: Date.now() + Math.random(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
@@ -270,22 +315,38 @@ export default function App() {
     const bmi = Date.now() + Math.random();
     const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: brt };
     setMessages(prev => [...prev, bmsg]);
+    
     if (autoSpeak && !parseToolCall(brt)) {
       const speech = cleanTextForTts(brt);
       if (speech) {
         setSpeakingMsgId(bmi);
-        tts.speak(speech, () => setSpeakingMsgId(null));
+        tts.speak(speech, () => {
+          setSpeakingMsgId(null);
+          playCheer();
+        }, voiceRate, voicePitch);
+      } else {
+        playCheer();
       }
+    } else {
+      playCheer();
     }
     setTimeout(() => setIsHappy(false), 2000);
   };
 
-
-  const deleteLastMessage = () => { setMessages(prev => { const am = prev.filter(m => m.chatId === activeChatId && m.user === currentUser); if (am.length === 0) return prev; const lm = am[am.length - 1].id; return prev.filter(m => m.id !== lm); }); };
+  const deleteLastMessage = () => {
+    playClick();
+    setMessages(prev => {
+      const am = prev.filter(m => m.chatId === activeChatId && m.user === currentUser);
+      if (am.length === 0) return prev;
+      const lm = am[am.length - 1].id;
+      return prev.filter(m => m.id !== lm);
+    });
+  };
 
   const handleFileSelect = (e) => {
     const f = e.target.files[0];
     if (f) {
+      playCartridge();
       if (f.type.startsWith('image/')) {
         setIsEncoding(true); const r = new FileReader();
         r.onloadend = () => { setPendingImageUrl(r.result); setPendingFile(null); setIsEncoding(false); setIsEating(true); };
@@ -310,19 +371,19 @@ export default function App() {
           <div className="bg-[#5acbb5] w-full h-full rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
             <div className="flex justify-center mb-3"><div className="w-16 h-2 bg-[#2d482e] rounded-full opacity-50"></div></div>
             <div className={`bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden`}>
-              <div className="bg-[#b5d6a7] w-full h-full rounded-[12px] flex flex-col overflow-hidden relative border-4 border-[#2d482e] bmo-font text-[10px] sm:text-xs">
+              <div className={`bg-[#b5d6a7] w-full h-full rounded-[12px] flex flex-col overflow-hidden relative border-4 border-[#2d482e] bmo-font text-[10px] sm:text-xs ${useCrtFilter ? 'crt-scanlines' : ''}`}>
                 <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
-                  <button type="button" onClick={() => setIsMenuOpen(true)} className="text-[#2d482e] hover:text-[#007aff] transition-colors"><Menu size={20} strokeWidth={3} /></button>
-                  <div className="text-lg sm:text-xl font-bold tracking-widest text-[#2d482e]">{face}</div>
+                  <button type="button" onClick={() => { playClick(); setIsMenuOpen(true); }} className="text-[#2d482e] hover:text-[#007aff] transition-colors"><Menu size={20} strokeWidth={3} /></button>
+                  <div className={`text-lg sm:text-xl font-bold tracking-widest text-[#2d482e] transition-all duration-200 ${isHappy ? 'animate-face-pop scale-125 text-green-900' : ''}`}>{face}</div>
                   <div className="flex gap-2">
-                    {systemHealth.openclaw === 'OK' ? <ShieldCheck size={16} className="text-green-700" /> : <ShieldAlert size={16} className="text-red-700" />}
+                    {systemHealth.backend === 'OK' && systemHealth.ollama === 'OK' ? <ShieldCheck size={16} className="text-green-700" /> : <ShieldAlert size={16} className="text-red-700" />}
                   </div>
                 </header>
                 <div className="flex-1 overflow-hidden flex flex-col relative">
                   {isServerSleeping ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
                       <div className="text-4xl mb-4">z_z</div><p className="mb-2">OFFLINE...</p>
-                      <button type="button" onClick={() => runDiagnostic()} className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] transition-all">RETRY LINK</button>
+                      <button type="button" onClick={() => { playClick(); runDiagnostic(); }} className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] transition-all bmo-btn-tactile">RETRY LINK</button>
                     </div>
                   ) : !isAuthenticated ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
@@ -340,7 +401,7 @@ export default function App() {
                       {!isEncoding && (pendingFile || pendingImageUrl) && (
                         <div className="px-3 py-2 bg-[#9fc28e] border-t-2 border-[#2d482e] flex items-center justify-between text-[8px]">
                            <div className="flex items-center gap-2 text-[#2d482e]">{pendingImageUrl ? <ImageIcon size={12} /> : <FileIcon size={12} />}<span className="truncate max-w-[120px]">{pendingImageUrl ? 'IMAGE READY' : pendingFile.name}</span></div>
-                           <button type="button" onClick={() => { setPendingFile(null); setPendingImageUrl(null); }} className="text-[#ff3b30]"><X size={14} /></button>
+                           <button type="button" onClick={() => { playClick(); setPendingFile(null); setPendingImageUrl(null); }} className="text-[#ff3b30]"><X size={14} /></button>
                         </div>
                       )}
                       <div className="border-t-4 border-[#2d482e] bg-[#9fc28e] p-2">
@@ -353,42 +414,43 @@ export default function App() {
                   <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex animate-in fade-in duration-200">
                     <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]">
-                        <span className="font-bold text-[#2d482e]">SYSTEM (v7.0.0)</span>
-                        <button type="button" onClick={() => setIsMenuOpen(false)} className="text-[#ff3b30]"><X size={20} /></button>
+                        <span className="font-bold text-[#2d482e]">SYSTEM (v7.1.0)</span>
+                        <button type="button" onClick={() => { playClick(); setIsMenuOpen(false); }} className="text-[#ff3b30]"><X size={20} /></button>
                       </div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
                          <button type="button" onClick={async () => { 
+                            playChime();
                             const h = await runDiagnostic();
                             const msg = h?.backend === 'OK' ? "BMO IS AWAKE. LOCAL BRAIN NOMINAL." : "BMO IS AWAKE. BUT LOCAL SERVER IS OFFLINE.";
-                            tts.speak(msg); setIsMenuOpen(false); 
-                         }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🔊 WAKE & SYNC</button>
-                         <button type="button" onClick={() => { setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black]">🎮 BMO DASHBOARD</button>
-                         <button type="button" onClick={() => { setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white]">📟 SYSTEM TERMINAL</button>
-                         <button type="button" onClick={() => setUseCrtFilter(!useCrtFilter)} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] ${useCrtFilter ? 'bg-[#7ba068] text-[#2d482e] shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO CRT FILTER: {useCrtFilter ? 'ON' : 'OFF'}</button>
-                         <button type="button" onClick={() => setActiveBrain(b => b === 'local' ? 'gemini' : 'local')} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors ${activeBrain === 'local' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#007aff] text-white shadow-[1px_1px_0_black]'}`}>{activeBrain === 'local' ? '🤖 LOCAL BMO (OLLAMA)' : '☁️ GEM BMO (CLOUD)'}</button>
+                            tts.speak(msg, undefined, voiceRate, voicePitch); setIsMenuOpen(false); 
+                         }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🔊 WAKE & SYNC</button>
+                         <button type="button" onClick={() => { playClick(); setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🎮 BMO DASHBOARD</button>
+                         <button type="button" onClick={() => { playClick(); setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white] bmo-btn-tactile">📟 SYSTEM TERMINAL</button>
+                         <button type="button" onClick={() => { playClick(); setUseCrtFilter(!useCrtFilter); }} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bmo-btn-tactile ${useCrtFilter ? 'bg-[#7ba068] text-[#2d482e] shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO CRT FILTER: {useCrtFilter ? 'ON' : 'OFF'}</button>
+                         <button type="button" onClick={() => { playChime(); setActiveBrain(b => b === 'local' ? 'gemini' : 'local'); }} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors bmo-btn-tactile ${activeBrain === 'local' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#007aff] text-white shadow-[1px_1px_0_black]'}`}>{activeBrain === 'local' ? '🤖 LOCAL BMO (OLLAMA)' : '☁️ GEM BMO (CLOUD)'}</button>
                       </div>
 
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
                         <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold uppercase tracking-widest">Accounts</div>
                         <div className="flex flex-col gap-2 text-xs">
                           {Object.keys(USERS).map(user => (
-                            <button key={user} type="button" onClick={() => handleUserToggle(user)} className={`p-2 rounded border-2 border-[#2d482e] text-left ${currentUser === user ? 'bg-[#007aff] text-white shadow-[1px_1px_0_black]' : 'bg-[#b5d6a7] shadow-[1px_1px_0_black]'}`}>{user.toUpperCase()}</button>
+                            <button key={user} type="button" onClick={() => handleUserToggle(user)} className={`p-2 rounded border-2 border-[#2d482e] text-left bmo-btn-tactile ${currentUser === user ? 'bg-[#007aff] text-white shadow-[1px_1px_0_black]' : 'bg-[#b5d6a7] shadow-[1px_1px_0_black]'}`}>{user.toUpperCase()}</button>
                           ))}
                         </div>
                       </div>
                       {isAuthenticated && (
                         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-                          <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-1 font-bold text-xs"><Plus size={16} /> NEW CHAT</button>
-                          <button type="button" onClick={() => handleClearActiveChat()} className="w-full p-2 bg-[#ffcc00] text-[#2d482e] border-2 border-[#2d482e] rounded shadow-[1px_1px_0_black] flex items-center justify-center gap-2 mb-2 text-[8px] font-bold uppercase"><Trash2 size={12} /> CLEAR SCREEN BUFFER</button>
+                          <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-1 font-bold text-xs bmo-btn-tactile"><Plus size={16} /> NEW CHAT</button>
+                          <button type="button" onClick={() => handleClearActiveChat()} className="w-full p-2 bg-[#ffcc00] text-[#2d482e] border-2 border-[#2d482e] rounded shadow-[1px_1px_0_black] flex items-center justify-center gap-2 mb-2 text-[8px] font-bold uppercase bmo-btn-tactile"><Trash2 size={12} /> CLEAR SCREEN BUFFER</button>
                           {activeHistory.map(chat => (
-                            <button key={chat.id} type="button" onClick={() => { setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] shadow-[1px_1px_0_black] ${activeChatId === chat.id ? 'bg-[#9fc28e] font-bold' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
+                            <button key={chat.id} type="button" onClick={() => { playClick(); setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] shadow-[1px_1px_0_black] bmo-btn-tactile ${activeChatId === chat.id ? 'bg-[#9fc28e] font-bold' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
                           ))}
                         </div>
                       )}
 
                     </div>
-                    <div className="flex-1 cursor-pointer" onClick={() => setIsMenuOpen(false)}></div>
+                    <div className="flex-1 cursor-pointer" onClick={() => { playClick(); setIsMenuOpen(false); }}></div>
                   </div>
                 )}
               </div>
@@ -405,13 +467,13 @@ export default function App() {
           {/* DASHBOARD RIGHT PANE (Desktop Only) */}
           <div className="hidden lg:flex flex-col h-full overflow-hidden gap-4">
             <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg shadow-inner">
-              <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
-              <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
+              <button type="button" onClick={() => { playClick(); setActiveDashboardTab('telemetry'); }} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
+              <button type="button" onClick={() => { playClick(); setActiveDashboardTab('editor'); }} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
             </div>
             <div className="flex-[2] min-h-0 border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-inner">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} getApiUrl={getApiUrl} getApiToken={getApiToken} />
-              <Playbook onRunMacro={(p) => { setInputText(p); }} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Playbook onRunMacro={(p) => { playClick(); setInputText(p); }} />
               <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center shadow-lg">
                 <span>SYSTEM STATUS: OPERATIONAL</span><span>PIXEL_FOLD_V2</span>
               </div>
@@ -424,16 +486,16 @@ export default function App() {
           <div className="fixed inset-0 bg-[#5acbb5] z-[100] flex flex-col p-4 animate-in slide-in-from-bottom duration-300 overflow-y-auto border-t-8 border-[#2d482e]">
             <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#5acbb5] py-2 z-10 border-b-4 border-[#2d482e]">
               <div className="text-[#2d482e] bmo-font text-xs flex items-center gap-2">⚙️ DASHBOARD_OVERLAY</div>
-              <button type="button" onClick={() => setIsDashboardOverlayOpen(false)} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-[#2d482e] bmo-font text-[10px] shadow-[2px_2px_0_#2d482e] active:translate-y-[1px]">CLOSE</button>
+              <button type="button" onClick={() => { playClick(); setIsDashboardOverlayOpen(false); }} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-[#2d482e] bmo-font text-[10px] shadow-[2px_2px_0_#2d482e] active:translate-y-[1px]">CLOSE</button>
             </div>
             <div className="flex flex-col gap-4">
                <div className="flex gap-2 p-1 bg-[#2d482e] rounded-lg shadow-inner">
-                <button type="button" onClick={() => setActiveDashboardTab('telemetry')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
-                <button type="button" onClick={() => setActiveDashboardTab('editor')} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
+                <button type="button" onClick={() => { playClick(); setActiveDashboardTab('telemetry'); }} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'telemetry' ? 'bg-[#b5d6a7] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>TELEMETRY</button>
+                <button type="button" onClick={() => { playClick(); setActiveDashboardTab('editor'); }} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
               </div>
               <div className="h-[300px] border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-2xl">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} getApiUrl={getApiUrl} getApiToken={getApiToken} />
-              <Playbook onRunMacro={(p) => { setInputText(p); setIsDashboardOverlayOpen(false); }} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Playbook onRunMacro={(p) => { playClick(); setInputText(p); setIsDashboardOverlayOpen(false); }} />
             </div>
           </div>
         )}
@@ -441,7 +503,7 @@ export default function App() {
           <div className="fixed inset-0 bg-black z-[100] flex flex-col p-4 animate-in fade-in duration-300">
             <div className="flex justify-between items-center mb-4 text-[#b5d6a7] bmo-font text-xs border-b border-[#b5d6a7] pb-2">
               <div className="flex items-center gap-2"><span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>LIVE_TELEMETRY</div>
-              <button type="button" onClick={() => setIsTerminalOverlayOpen(false)} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-white bmo-font text-[10px] shadow-[2px_2px_0_white] active:translate-y-[1px]">EXIT</button>
+              <button type="button" onClick={() => { playClick(); setIsTerminalOverlayOpen(false); }} className="bg-[#ff3b30] text-white px-4 py-2 rounded border-2 border-white bmo-font text-[10px] shadow-[2px_2px_0_white] active:translate-y-[1px]">EXIT</button>
             </div>
             <div className="flex-1 overflow-hidden border-2 border-[#b5d6a7] rounded-lg shadow-inner"><TelemetryTerminal /></div>
           </div>

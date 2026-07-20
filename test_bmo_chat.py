@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def test_bmo_chat():
-    api_url = os.getenv("VITE_OPENCLAW_API_URL")
-    api_token = os.getenv("VITE_OPENCLAW_API_KEY")
+    api_url = os.getenv("VITE_BMO_API_URL") or "http://localhost:18789"
+    api_token = os.getenv("VITE_BMO_API_KEY") or "bmo-secret-key-2026"
 
     if not api_url or not api_token:
-        print("❌ Error: VITE_OPENCLAW_API_URL or VITE_OPENCLAW_API_KEY missing from .env")
+        print("❌ Error: VITE_BMO_API_URL or VITE_BMO_API_KEY missing from .env")
         return
 
     # Using the verified OpenAI-compatible endpoint
@@ -20,7 +20,7 @@ def test_bmo_chat():
     print(f"🔍 Testing BMO Chat at: {full_url}")
 
     payload = {
-        "model": "openclaw",
+        "model": "ornith:9b",
         "messages": [
             {"role": "user", "content": "Hello BMO! Are you awake?"}
         ]

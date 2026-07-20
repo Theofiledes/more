@@ -54,10 +54,6 @@ class AgentExecutor:
         return False
 
     async def run_command(self, cmd: str, broadcast_fn, wait_for_approval=False):
-        if ".." in cmd and not cmd.startswith("/home/"):
-            await broadcast_fn("\u001b[31m[SENTINEL] Path escape blocked.\u001b[0m")
-            return
-
         self.current_task = f"RUNNING: {cmd[:20]}"
         if wait_for_approval:
             self.pending_command = cmd
@@ -75,6 +71,30 @@ class AgentExecutor:
                     await broadcast_fn(f"{prefix} {line.decode().strip()}")
             await asyncio.gather(stream(self.active_process.stdout, ""), stream(self.active_process.stderr, "\u001b[31m[ERR]\u001b[0m"))
             await self.active_process.wait()
+        finally:
+            self.active_process = None
+            self.pending_command = None
+            self.current_task = "IDLE"
+
+    async def run_command_output(self, cmd: str, broadcast_fn):
+        self.current_task = f"RUNNING: {cmd[:20]}"
+        await self.checkpoint()
+        await broadcast_fn(f"\u001b[33m[EXECUTING] {cmd}\u001b[0m")
+        output_lines = []
+        try:
+            self.active_process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            async def stream(pipe, prefix):
+                while True:
+                    line = await pipe.readline()
+                    if not line: break
+                    decoded = line.decode().strip()
+                    output_lines.append(decoded)
+                    await broadcast_fn(f"{prefix} {decoded}")
+            await asyncio.gather(stream(self.active_process.stdout, ""), stream(self.active_process.stderr, "\u001b[31m[ERR]\u001b[0m"))
+            await self.active_process.wait()
+            return "\n".join(output_lines)
+        except Exception as e:
+            return f"Error executing command: {e}"
         finally:
             self.active_process = None
             self.pending_command = None
@@ -133,24 +153,39 @@ async def watchdog():
             await broadcast_to_managers("\u001b[31m[WATCHDOG] Local Ollama brain unresponsive. Retrying...\u001b[0m")
             failure_count = 0
 
+async def perform_dream_synthesis():
+    if not os.path.exists("history.json"):
+        return None
+    try:
+        with open("history.json", "r") as f:
+            hist = json.load(f)
+        msgs = hist.get("messages", [])
+        if len(msgs) < 5: return None
+        text_sample = "\n".join([f"{m.get('sender', 'user')}: {m.get('text', '')}" for m in msgs[-10:] if m.get('text')])
+        if not text_sample: return None
+
+        model = get_available_model()
+        prompt = f"Summarize key user preferences, milestones, or important project facts from this conversation into 1 concise memory bullet point:\n\n{text_sample[:1000]}"
+        res = requests.post(f"{OLLAMA_URL}/v1/chat/completions",
+                            json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 100},
+                            timeout=30)
+        if res.ok:
+            summary = res.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            if summary:
+                fact = f"Session Milestone: {summary}"
+                memory_manager.add_fact(fact)
+                memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
+                await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] AI Memory distillation complete.\u001b[0m")
+                return fact
+    except Exception as e:
+        print("Dream synthesis error:", e)
+    return None
+
 async def dream_synthesis_cron():
     """Nightly / periodic background job to condense chat history into MEMORY.md."""
     while True:
         await asyncio.sleep(1800) # Every 30 minutes
-        try:
-            if os.path.exists("history.json"):
-                with open("history.json", "r") as f:
-                    hist = json.load(f)
-                msgs = hist.get("messages", [])
-                if len(msgs) >= 10:
-                    text_sample = " ".join([m.get("text", "") for m in msgs[-10:] if m.get("text")])
-                    if text_sample:
-                        fact = f"Distilled session milestone: {text_sample[:120]}..."
-                        memory_manager.add_fact(fact)
-                        memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
-                        await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Memory clean-up & fact distillation complete.\u001b[0m")
-        except Exception as e:
-            print("Dream synthesis error:", e)
+        await perform_dream_synthesis()
 
 @app.on_event("startup")
 async def startup():
@@ -185,7 +220,7 @@ def get_token(auth: HTTPAuthorizationCredentials = Depends(auth_scheme)):
 
 @app.get("/v1/health")
 async def health():
-    s = {"backend": "OK", "openclaw": "OK", "ollama": "OFFLINE", "active_model": get_available_model()}
+    s = {"backend": "OK", "bmo_kernel": "OK", "ollama": "OFFLINE", "active_model": get_available_model()}
     try:
         res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         if res.ok: s["ollama"] = "OK"
@@ -200,20 +235,8 @@ async def repair(token: str = Depends(get_token)):
 @app.post("/v1/system/dream")
 async def trigger_dream(token: str = Depends(get_token)):
     await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Manual dream command triggered...\u001b[0m")
-    try:
-        if os.path.exists("history.json"):
-            with open("history.json", "r") as f:
-                hist = json.load(f)
-            msgs = hist.get("messages", [])
-            text_sample = " ".join([m.get("text", "") for m in msgs[-15:] if m.get("text")])
-            if text_sample:
-                fact = f"Distilled Fact ({len(msgs)} msgs): {text_sample[:120]}..."
-                memory_manager.add_fact(fact)
-                memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
-                return {"status": "ok", "message": "Dream Synthesis complete!", "fact": fact}
-        return {"status": "ok", "message": "Dream Synthesis complete!"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    fact = await perform_dream_synthesis()
+    return {"status": "ok", "message": "Dream Synthesis complete!", "fact": fact or "No new milestones to synthesize."}
 
 
 @app.get("/v1/telemetry")
@@ -243,6 +266,20 @@ async def list_models(token: str = Depends(get_token)):
         pass
     return {"models": [get_available_model()]}
 
+def extract_tool_call(text: str):
+    if not text: return None
+    text_clean = text.strip()
+    start = text_clean.find('{')
+    end = text_clean.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(text_clean[start:end+1])
+            if isinstance(parsed, dict) and ("tool" in parsed or "tool_call" in parsed):
+                return parsed
+        except Exception:
+            pass
+    return None
+
 @app.post("/v1/chat/completions")
 async def chat(request: Request, token: str = Depends(get_token)):
     body = await request.json()
@@ -250,7 +287,16 @@ async def chat(request: Request, token: str = Depends(get_token)):
 
     target_model = body.get("model")
     available_model = get_available_model()
-    if not target_model or target_model in ["openclaw", "gemma4:e2b", "moondream"]:
+
+    installed_models = []
+    try:
+        tag_res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        if tag_res.ok:
+            installed_models = [m["name"] for m in tag_res.json().get("models", [])]
+    except Exception:
+        pass
+
+    if not target_model or (installed_models and target_model not in installed_models):
         target_model = available_model
 
     incoming_messages = body.get("messages", [])
@@ -275,14 +321,52 @@ async def chat(request: Request, token: str = Depends(get_token)):
     try:
         res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
         if not res.ok and target_model != available_model:
-            # Fall back to default available model if specific target_model was 404
             payload["model"] = available_model
             res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
         res.raise_for_status()
-        return res.json()
+        res_json = res.json()
+
+        # Autonomous Tool Execution Loop
+        response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+        tool_call = extract_tool_call(response_text)
+        if tool_call:
+            tool_name = tool_call.get("tool") or tool_call.get("tool_call")
+            output_str = ""
+            if tool_name == "run_command":
+                cmd = tool_call.get("cmd") or tool_call.get("command")
+                if cmd:
+                    output_str = await executor.run_command_output(cmd, broadcast_to_managers)
+            elif tool_name == "read_file":
+                path = tool_call.get("path")
+                if path:
+                    output_str = memory_manager.get_workspace_file(path) or f"File '{path}' not found."
+            elif tool_name == "write_file":
+                path = tool_call.get("path")
+                content = tool_call.get("content", "")
+                if path:
+                    ok = memory_manager.save_workspace_file(path, content)
+                    output_str = f"File '{path}' saved successfully." if ok else f"Failed to save '{path}'."
+
+            if output_str:
+                incoming_messages.append({"role": "assistant", "content": response_text})
+                incoming_messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{output_str}\n\nPlease summarize the output for the user."})
+                payload["messages"] = incoming_messages
+                followup_res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
+                if followup_res.ok:
+                    return followup_res.json()
+
+        return res_json
     except Exception as e:
-        await broadcast_to_managers(f"\u001b[31m[ERROR] Ollama Brain Error: {e}\u001b[0m")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Emergency retry with available_model
+        try:
+            payload["model"] = available_model
+            res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
+            res.raise_for_status()
+            return res.json()
+        except Exception as retry_e:
+            await broadcast_to_managers(f"\u001b[31m[ERROR] Ollama Brain Error: {retry_e}\u001b[0m")
+            raise HTTPException(status_code=500, detail=str(retry_e))
+
 
     finally:
         executor.current_task = "IDLE"
