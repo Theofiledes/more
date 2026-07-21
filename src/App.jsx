@@ -64,14 +64,16 @@ const EMOTION_MAP = {
   surprised: 'O_O',
   silly: '(>w<)',
   blush: '(>///<)',
-  victory: '\\o/'
+  victory: '\\o/',
+  sleeping: '(z_z)',
+  sleep: '(-_-)'
 };
 
 const BMO_SYSTEM_PROMPT = `You are BMO (Beemore), a living video game console and friendly AI companion created by Anthony.
 Follow these speech & emotion directives strictly:
 1. DO NOT output emojis in responses (e.g. 😊, 🎮, ✨, 🤖) because TTS speaks emoji names out loud.
 2. ALWAYS include a bracketed BMO face emotion trigger at the very start of your response.
-   Choose one from: [face:happy], [face:glasses], [face:thinking], [face:surprised], [face:silly], [face:blush], [face:victory].
+   Choose one from: [face:happy], [face:glasses], [face:thinking], [face:surprised], [face:silly], [face:blush], [face:victory], [face:sleeping].
 Example: "[face:happy] Hello Anthony! BMO is ready to play video games with you."`;
 
 const parseBmoEmotion = (text) => {
@@ -584,10 +586,24 @@ export default function App() {
     const cam = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
     setMessages(prev => [...prev, nm]); setInputText(''); setPendingFile(null); setPendingImageUrl(null); setIsLoading(true);
 
+    const isBedtime = /goodnight|good night|going to bed|sleep mode|time for bed|bmo sleep/i.test(ci);
+    if (isBedtime) {
+      setIsDreaming(true);
+      setThinkingStatus('😴 BMO ENTERING BEDTIME SLEEP & DREAM MODE... 💤✨');
+      const apiUrl = getApiUrl();
+      const apiToken = getApiToken();
+      fetch(`${apiUrl}/v1/system/sleep`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiToken}` }
+      }).catch(() => {});
+    }
+
     if (cim) {
       setThinkingStatus('🤖 BMO GOT YOUR IMAGE! WAKING UP VISION BRAIN... 👁️✨');
     } else if (cf) {
       setThinkingStatus(`📼 BMO EATING CARTRIDGE! READING ${cf.name.toUpperCase()}... 📄⚡`);
+    } else if (isBedtime) {
+      setThinkingStatus('😴 BMO ENTERING BEDTIME SLEEP & DREAM MODE... 💤✨');
     } else {
       setThinkingStatus('💭 BMO COMPUTING... *BOOP BEEP BLOOP!* 🎮');
     }

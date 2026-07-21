@@ -299,6 +299,17 @@ async def trigger_dream(token: str = Depends(get_token)):
     fact = await perform_dream_synthesis()
     return {"status": "ok", "message": "Dream Synthesis complete!", "fact": fact or "No new milestones to synthesize."}
 
+@app.post("/v1/system/sleep")
+async def trigger_sleep(token: str = Depends(get_token)):
+    await broadcast_to_managers("\u001b[35m[BEDTIME SLEEP MODE] User said goodnight. BMO entering dream state...\u001b[0m")
+    summary = await perform_dream_synthesis()
+    return {
+        "status": "sleeping",
+        "face": "(z_z)",
+        "message": "Goodnight! BMO is now sleeping and dreaming... 😴💤✨",
+        "distilled_memory": summary or "Memory distilled cleanly."
+    }
+
 
 @app.get("/v1/telemetry")
 async def telemetry(token: str = Depends(get_token)): 
