@@ -12,6 +12,9 @@ from fastapi.responses import FileResponse
 from typing import List, Optional, Union
 from pydantic import BaseModel
 from git import Repo
+import base64
+import time
+
 try:
     import psutil
 except ImportError:
@@ -26,6 +29,30 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 CLOUD_API_URL = os.getenv("CLOUD_API_URL", "https://generativelanguage.googleapis.com")
 API_TOKEN = os.getenv("API_TOKEN", "bmo-secret-key-2026")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "ornith:9b")
+
+SCRATCH_DIR = os.path.join(os.getcwd(), "scratch")
+os.makedirs(SCRATCH_DIR, exist_ok=True)
+
+def save_payload_media_to_scratch(messages):
+    """Scan incoming user messages for base64 image_url or attached files and cache to scratch/."""
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "user":
+            content = m.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        url = item.get("image_url", {}).get("url", "")
+                        if url.startswith("data:image/"):
+                            try:
+                                header, encoded = url.split(",", 1)
+                                ext = header.split(";")[0].split("/")[1] or "png"
+                                filename = f"scratch_img_{int(time.time())}.{ext}"
+                                filepath = os.path.join(SCRATCH_DIR, filename)
+                                with open(filepath, "wb") as f:
+                                    f.write(base64.b64decode(encoded))
+                                print(f"📸 Image cached to scratch: {filepath}")
+                            except Exception as e:
+                                print("Error caching image to scratch:", e)
 
 class WorkspaceFile(BaseModel):
     content: str
@@ -300,6 +327,7 @@ async def chat(request: Request, token: str = Depends(get_token)):
         target_model = available_model
 
     incoming_messages = body.get("messages", [])
+    save_payload_media_to_scratch(incoming_messages)
 
     # Light context window: trim history to latest 10 messages
     if len(incoming_messages) > 10:
@@ -430,6 +458,27 @@ async def git_push(token: str = Depends(get_token)):
         return {"status": "pushed", "output": output}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+@app.get("/v1/scratch/files")
+async def list_scratch_files(token: str = Depends(get_token)):
+    try:
+        files = os.listdir(SCRATCH_DIR)
+        return {"files": files, "count": len(files)}
+    except Exception as e:
+        return {"files": [], "error": str(e)}
+
+@app.delete("/v1/scratch/clean")
+async def clean_scratch(token: str = Depends(get_token)):
+    try:
+        count = 0
+        for f in os.listdir(SCRATCH_DIR):
+            fp = os.path.join(SCRATCH_DIR, f)
+            if os.path.isfile(fp):
+                os.remove(fp)
+                count += 1
+        return {"status": "cleaned", "removed_count": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/v1/approve")
