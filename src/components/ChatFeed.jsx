@@ -93,7 +93,7 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
+    <div id="bmo-chat-feed-scroll" className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
       {messages.length === 0 ? (
         <div className="text-center text-[#2d482e] opacity-50 mt-10">
           NO MESSAGES YET.

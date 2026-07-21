@@ -237,3 +237,33 @@ export const playCartridge = () => {
     console.warn("SFX error:", e);
   }
 };
+
+/**
+ * Barge-in / Audio Interrupt Sound Effect
+ */
+export const playBargeIn = () => {
+  if (!isSfxEnabled()) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(450, now);
+    osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
+
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.08);
+  } catch (e) {
+    console.warn("SFX error:", e);
+  }
+};
+

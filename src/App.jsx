@@ -191,9 +191,26 @@ export default function App() {
   }, []);
 
   const [serverStatus, setServerStatus] = useState('OK');
+  const [isStatusExpanded, setIsStatusExpanded] = useState(true);
   const [toastMessage, setToastMessage] = useState(null);
   const lastModelsRef = useRef([]);
   const lastStatusRef = useRef(null);
+
+  useEffect(() => {
+    setIsStatusExpanded(true);
+    const timer = setTimeout(() => {
+      setIsStatusExpanded(false);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [serverStatus, systemHealth.backend]);
+
+  const handleScrollUp = useCallback(() => {
+    document.getElementById('bmo-chat-feed-scroll')?.scrollBy({ top: -150, behavior: 'smooth' });
+  }, []);
+
+  const handleScrollDown = useCallback(() => {
+    document.getElementById('bmo-chat-feed-scroll')?.scrollBy({ top: 150, behavior: 'smooth' });
+  }, []);
 
   const showToast = useCallback((text, type = 'info') => {
     setToastMessage({ text, type });
@@ -498,20 +515,31 @@ export default function App() {
             <div className={`bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden`}>
               <div className={`bg-[#b5d6a7] w-full h-full rounded-[12px] flex flex-col overflow-hidden relative border-4 border-[#2d482e] bmo-font text-[10px] sm:text-xs ${useCrtFilter ? 'crt-scanlines' : ''}`}>
                 <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
-                  <button type="button" onClick={() => { playClick(); setIsMenuOpen(true); }} className="text-[#2d482e] hover:text-[#007aff] transition-colors"><Menu size={20} strokeWidth={3} /></button>
-                  <div className={`text-lg sm:text-xl font-bold tracking-widest text-[#2d482e] transition-all duration-200 ${isHappy ? 'animate-face-pop scale-125 text-green-900' : ''}`}>{face}</div>
-                  <div className="flex items-center gap-1">
-                    {serverStatus === 'OK' && systemHealth.backend === 'OK' ? (
-                      <span className="bg-[#2d482e] text-[#b5d6a7] px-2 py-0.5 rounded text-[7px] sm:text-[8px] font-bold flex items-center gap-1 border border-[#b5d6a7] shadow-[1px_1px_0_black]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
-                        🟢 LINK STABLE
-                      </span>
-                    ) : (
-                      <span className="bg-[#ffcc00] text-[#2d482e] px-2 py-0.5 rounded text-[7px] sm:text-[8px] font-bold flex items-center gap-1 border border-[#2d482e] shadow-[1px_1px_0_black] animate-pulse">
-                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-600"></span>
-                        🟡 SERVER RESTARTING...
-                      </span>
-                    )}
+                  <button type="button" onClick={() => { playClick(); setIsMenuOpen(true); }} className="text-[#2d482e] hover:text-[#007aff] transition-colors z-10"><Menu size={20} strokeWidth={3} /></button>
+                  <div className={`text-lg sm:text-xl font-bold tracking-widest text-[#2d482e] transition-all duration-200 absolute left-1/2 -translate-x-1/2 ${isHappy ? 'animate-face-pop scale-125 text-green-900' : ''}`}>{face}</div>
+                  <div className="flex items-center gap-1 z-10">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playClick();
+                        setIsStatusExpanded(prev => !prev);
+                      }}
+                      title="Toggle Status Detail"
+                      className={`px-2 py-0.5 rounded text-[7px] sm:text-[8px] font-bold flex items-center gap-1 shadow-[1px_1px_0_black] transition-all duration-300 cursor-pointer ${
+                        serverStatus === 'OK' && systemHealth.backend === 'OK'
+                          ? 'bg-[#2d482e] text-[#b5d6a7] border border-[#b5d6a7]'
+                          : 'bg-[#ffcc00] text-[#2d482e] border border-[#2d482e] animate-pulse'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        serverStatus === 'OK' && systemHealth.backend === 'OK' ? 'bg-green-400 animate-pulse' : 'bg-yellow-600'
+                      }`} />
+                      {isStatusExpanded ? (
+                        <span>{serverStatus === 'OK' && systemHealth.backend === 'OK' ? '🟢 LINK STABLE' : '🟡 RESTARTING'}</span>
+                      ) : (
+                        <span>{serverStatus === 'OK' && systemHealth.backend === 'OK' ? '🟢' : '🟡'}</span>
+                      )}
+                    </button>
                   </div>
                 </header>
                 <div className="flex-1 overflow-hidden flex flex-col relative">
@@ -602,7 +630,7 @@ export default function App() {
             </div>
             {/* LABELS & HARDWARE */}
             <div className="mt-4 px-2 sm:px-4">
-               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onClearActiveChat={handleClearActiveChat} onStopTTS={onStopTTS} />
+               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onClearActiveChat={handleClearActiveChat} onStopTTS={onStopTTS} onScrollUp={handleScrollUp} onScrollDown={handleScrollDown} />
             </div>
           </div>
           {/* DASHBOARD RIGHT PANE (Desktop Only) */}
