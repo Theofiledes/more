@@ -57,6 +57,31 @@ const fontStyle = `
 
 const USERS = { Anthony: { pin: '8436' }, Kayla: { pin: '4321' } };
 
+const EMOTION_MAP = {
+  happy: '^_^',
+  glasses: '(⌐■_■)',
+  thinking: 'O_o',
+  surprised: 'O_O',
+  silly: '(>w<)',
+  blush: '(>///<)',
+  victory: '\\o/'
+};
+
+const BMO_SYSTEM_PROMPT = `You are BMO (Beemore), a living video game console and friendly AI companion created by Anthony.
+Follow these speech & emotion directives strictly:
+1. DO NOT output emojis in responses (e.g. 😊, 🎮, ✨, 🤖) because TTS speaks emoji names out loud.
+2. ALWAYS include a bracketed BMO face emotion trigger at the very start of your response.
+   Choose one from: [face:happy], [face:glasses], [face:thinking], [face:surprised], [face:silly], [face:blush], [face:victory].
+Example: "[face:happy] Hello Anthony! BMO is ready to play video games with you."`;
+
+const parseBmoEmotion = (text) => {
+  if (!text || typeof text !== 'string') return { emotion: null, cleanText: text || '' };
+  const match = text.match(/\[face:\s*([a-zA-Z0-9_-]+)\]/i);
+  const emotion = match ? match[1].toLowerCase() : null;
+  const cleanText = text.replace(/\[face:\s*([a-zA-Z0-9_-]+)\]/gi, '').trim();
+  return { emotion, cleanText };
+};
+
 const parseToolCall = (text) => {
   if (!text || typeof text !== 'string' || !text.trim().startsWith('{')) return null;
   try {
@@ -98,7 +123,12 @@ const fetchGemini = async (command, image = null, file = null, history = []) => 
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents })
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [{ text: BMO_SYSTEM_PROMPT }]
+        },
+        contents
+      })
     });
     if (!res.ok) throw new Error(`Gemini API returned ${res.status}`);
     const data = await res.json();
@@ -118,6 +148,8 @@ const sendLocalBmoCommand = async (command, history = [], image = null, file = n
   if (file && file.content) {
     promptText = `[Attached File: ${file.name}]\n\`\`\`\n${file.content}\n\`\`\`\n\n${nc || 'Please analyze this attached file.'}`;
   }
+
+  const systemMsg = { role: "system", content: BMO_SYSTEM_PROMPT };
 
   // 1. Image Pipeline: 2-Stage Moondream Optical Sensor -> BMO Core Brain
   if (image) {
@@ -160,6 +192,7 @@ const sendLocalBmoCommand = async (command, history = [], image = null, file = n
 User Question: "${nc || 'What do you see in this image?'}"`;
 
     const msgs = [
+      systemMsg,
       ...history.map(m => ({
         role: m.sender === 'user' ? 'user' : 'assistant',
         content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
@@ -184,10 +217,14 @@ User Question: "${nc || 'What do you see in this image?'}"`;
 
   // 2. Standard Text / File Processing
   const rc = promptText || "Please help with my request.";
-  const msgs = [...history.map(m => ({
-    role: m.sender === 'user' ? 'user' : 'assistant',
-    content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
-  })), { role: 'user', content: rc }];
+  const msgs = [
+    systemMsg,
+    ...history.map(m => ({
+      role: m.sender === 'user' ? 'user' : 'assistant',
+      content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
+    })),
+    { role: 'user', content: rc }
+  ];
 
   try {
     const res = await fetch(`${apiUrl}/v1/chat/completions`, {
@@ -306,7 +343,9 @@ export default function App() {
   const cleanTextForTts = (text) => {
     if (!text) return '';
     return text
-      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+      .replace(/\[face:\s*([a-zA-Z0-9_-]+)\]/gi, '')
+      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+      .replace(/\p{Extended_Pictographic}/gu, '')
       .replace(/[*_#>`~]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -396,16 +435,42 @@ export default function App() {
     syncState();
   }, [safetyStride, isDreaming]);
 
+  const isSpeaking = tts.isSpeaking || speakingMsgId !== null;
+
   useEffect(() => {
     if (systemHealth.backend !== 'OK') { setFace('X_X'); return; }
 
     if (isLoading) { setFace('O_O'); return; }
+    if (isEating) {
+      setFace('>_<');
+      const sw = setTimeout(() => setFace('~_~'), 500);
+      const fi = setTimeout(() => setIsEating(false), 1500);
+      return () => { clearTimeout(sw); clearTimeout(fi); };
+    }
+
+    if (isSpeaking) {
+      const frames = activeEmotion === 'glasses'
+        ? ['(⌐■o■)', '(⌐■-■)']
+        : ['^o^', '^-^', '^O^', '^=^', '^v^', '^w^'];
+      let frameIdx = 0;
+      setFace(frames[0]);
+      const animInterval = setInterval(() => {
+        frameIdx = (frameIdx + 1) % frames.length;
+        setFace(frames[frameIdx]);
+      }, 160);
+      return () => clearInterval(animInterval);
+    }
+
     if (isHappy) { setFace('\\o/'); return; }
-    if (isEating) { setFace('>_<'); const sw = setTimeout(() => setFace('~_~'), 500); const fi = setTimeout(() => setIsEating(false), 1500); return () => { clearTimeout(sw); clearTimeout(fi); }; }
-    setFace('^_^');
-    const blink = setInterval(() => { setFace('-_-'); setTimeout(() => setFace(p => p === '-_-' ? '^_^' : p), 200); }, 4000 + Math.random() * 2000);
+
+    const baseFace = EMOTION_MAP[activeEmotion] || '^_^';
+    setFace(baseFace);
+    const blink = setInterval(() => {
+      setFace('-_-');
+      setTimeout(() => setFace(p => p === '-_-' ? (EMOTION_MAP[activeEmotion] || '^_^') : p), 200);
+    }, 4000 + Math.random() * 2000);
     return () => clearInterval(blink);
-  }, [isLoading, isHappy, isEating, systemHealth]);
+  }, [isLoading, isHappy, isEating, systemHealth, isSpeaking, activeEmotion]);
 
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
@@ -480,7 +545,7 @@ export default function App() {
     const u = uo || currentUser;
     const existingIds = history.map(h => h.id).filter(id => typeof id === 'number');
     const ni = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
-    const greetingMsg = { id: Date.now() + Math.random(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}! NEW CHAT SESSION READY. 🎮✨` };
+    const greetingMsg = { id: Date.now() + Math.random(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}! NEW CHAT SESSION READY.` };
     
     const updatedHistory = [{ id: ni, user: u, title: `SESSION #${ni}` }, ...history];
     const updatedMessages = [...messages.filter(m => m.chatId !== ni), greetingMsg];
@@ -534,16 +599,21 @@ export default function App() {
     } else { 
       setFace('O_O'); 
       const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel, (msg) => setThinkingStatus(msg)); 
-      brt = res || "BMO is computing... If there is no reply, please check local server link! ^_^;"; 
+      brt = res || "[face:happy] BMO is computing... If there is no reply, please check local server link!"; 
+    }
+
+    const { emotion, cleanText } = parseBmoEmotion(brt);
+    if (emotion && EMOTION_MAP[emotion]) {
+      setActiveEmotion(emotion);
     }
 
     setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
     const bmi = Date.now() + Math.random();
-    const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: brt };
+    const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText };
     setMessages(prev => [...prev, bmsg]);
     
-    if (autoSpeak && !parseToolCall(brt)) {
-      const speech = cleanTextForTts(brt);
+    if (autoSpeak && !parseToolCall(cleanText)) {
+      const speech = cleanTextForTts(cleanText);
       if (speech) {
         setSpeakingMsgId(bmi);
         tts.speak(speech, () => {
