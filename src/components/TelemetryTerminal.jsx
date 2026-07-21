@@ -96,6 +96,20 @@ const TelemetryTerminal = () => {
         <div className="truncate text-yellow-400">[{metrics.task}]</div>
       </div>
 
+      {/* CONTEXT WINDOW METER */}
+      <div className="bg-[#142316] px-2 py-1.5 border-b-2 border-[#2d482e] text-[6px] bmo-font flex flex-col gap-1 text-[#b5d6a7]">
+        <div className="flex justify-between items-center">
+          <span>CONTEXT WINDOW: {metrics.context_tokens || 0} / {metrics.context_limit || 8192} TOKENS</span>
+          <span className={(metrics.context_percent || 0) > 80 ? "text-red-400" : "text-green-400"}>{metrics.context_percent || 0}%</span>
+        </div>
+        <div className="w-full bg-[#2d482e] h-1.5 rounded-full overflow-hidden border border-[#b5d6a7]/20">
+          <div 
+            className={`h-full transition-all duration-300 ${(metrics.context_percent || 0) > 80 ? 'bg-red-500' : (metrics.context_percent || 0) > 50 ? 'bg-amber-400' : 'bg-green-400'}`}
+            style={{ width: `${Math.min(100, metrics.context_percent || 0)}%` }}
+          />
+        </div>
+      </div>
+
       {/* Terminal Header */}
       <div className="bg-[#2d482e] p-2 flex justify-between items-center text-[8px] bmo-font text-[#b5d6a7]">
         <div className="flex items-center gap-2">

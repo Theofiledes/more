@@ -29,7 +29,7 @@ else
     if [ -d "venv" ]; then
         source venv/bin/activate
     fi
-    nohup setsid python3 -m uvicorn server:app --host 0.0.0.0 --port "$BMO_PORT" > server.log 2>&1 & disown
+    nohup setsid ./venv/bin/python3 -m uvicorn server:app --host 0.0.0.0 --port "$BMO_PORT" > server.log 2>&1 & disown
     echo "⏳ Waiting for BMO to stretch..."
     sleep 3
 fi

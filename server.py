@@ -267,15 +267,90 @@ async def trigger_dream(token: str = Depends(get_token)):
 
 
 @app.get("/v1/telemetry")
-async def telemetry(token: str = Depends(get_token)): return {"lines": telemetry_buffer}
+async def telemetry(token: str = Depends(get_token)): 
+    return {"lines": telemetry_buffer}
+
+last_context_metrics = {
+    "context_tokens": 350,
+    "context_limit": 8192,
+    "context_percent": 4,
+    "active_messages": 0
+}
+
+def estimate_tokens(messages):
+    """Estimate token count for incoming message payload."""
+    total_chars = 0
+    for m in messages:
+        if isinstance(m, dict):
+            c = m.get("content", "")
+            if isinstance(c, str):
+                total_chars += len(c)
+            elif isinstance(c, list):
+                for item in c:
+                    if isinstance(item, dict) and "text" in item:
+                        total_chars += len(item["text"])
+    return max(10, total_chars // 4)
+
+MICRO_AGENTS = {
+    "@android_debugger": {
+        "model": "moondream",
+        "prompt": "You are @android_debugger. Filter adb logcat traces, identify FATAL EXCEPTIONs / NullPointerExceptions, locate failing line in android/ or src/, and draft a fix."
+    },
+    "@ui_polisher": {
+        "model": "ornith:9b",
+        "prompt": "You are @ui_polisher. Review frontend src/App.jsx and CSS components. Propose high-impact aesthetic enhancements, smooth transitions, retro game colors, and micro-animations."
+    },
+    "@code_auditor": {
+        "model": "ornith:9b",
+        "prompt": "You are @code_auditor. Inspect recent git diffs (`git status`, `git diff`). Verify path safety, input validation, resource efficiency, and security."
+    },
+    "@dream_synthesizer": {
+        "model": "ornith:9b",
+        "prompt": "You are @dream_synthesizer. Perform memory distillation on recent history, extract key milestones, and update MEMORY.md."
+    }
+}
+
+async def run_micro_agent(agent_name: str, task_desc: str):
+    agent_info = MICRO_AGENTS.get(agent_name.lower())
+    if not agent_info:
+        return f"Unknown micro-agent '{agent_name}'."
+    
+    await broadcast_to_managers(f"\u001b[35m[MICRO-AGENT {agent_name}] Spawning sub-routine for task: '{task_desc[:60]}'...\u001b[0m")
+    
+    sub_payload = {
+        "model": agent_info["model"],
+        "messages": [
+            {"role": "system", "content": agent_info["prompt"]},
+            {"role": "user", "content": task_desc}
+        ],
+        "stream": False
+    }
+    try:
+        res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=sub_payload, timeout=60)
+        if res.ok:
+            output = res.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            await broadcast_to_managers(f"\u001b[32m[MICRO-AGENT {agent_name}] Task completed successfully.\u001b[0m")
+            return f"[{agent_name} DELEGATED RESULT]:\n{output}"
+    except Exception as e:
+        await broadcast_to_managers(f"\u001b[31m[MICRO-AGENT {agent_name}] Execution error: {e}\u001b[0m")
+        return f"[{agent_name} ERROR]: {e}"
+    return f"[{agent_name} NO RESPONSE]"
 
 @app.get("/v1/system/metrics")
 async def metrics(token: str = Depends(get_token)):
     cpu_val = psutil.cpu_percent() if psutil else 0.0
     ram_val = psutil.virtual_memory().percent if psutil else 0.0
     disk_val = psutil.disk_usage('/').percent if psutil else 0.0
-    return {"cpu": cpu_val, "ram": ram_val, "task": executor.current_task, "disk": disk_val}
-
+    return {
+        "cpu": cpu_val, 
+        "ram": ram_val, 
+        "task": executor.current_task, 
+        "disk": disk_val,
+        "context_tokens": last_context_metrics["context_tokens"],
+        "context_limit": last_context_metrics["context_limit"],
+        "context_percent": last_context_metrics["context_percent"],
+        "active_messages": last_context_metrics["active_messages"]
+    }
 
 def build_system_prompt():
     soul = memory_manager.get_workspace_file("SOUL.md") or "You are BMO."
@@ -340,6 +415,15 @@ async def chat(request: Request, token: str = Depends(get_token)):
     else:
         incoming_messages[0]["content"] = f"{system_prompt}\n\n{incoming_messages[0]['content']}"
 
+    # Update Context Usage Projections
+    used_tokens = estimate_tokens(incoming_messages)
+    limit_tokens = 8192
+    context_percent = min(100, round((used_tokens / limit_tokens) * 100))
+    last_context_metrics["context_tokens"] = used_tokens
+    last_context_metrics["context_limit"] = limit_tokens
+    last_context_metrics["context_percent"] = context_percent
+    last_context_metrics["active_messages"] = len(incoming_messages)
+
     payload = {
         "model": target_model,
         "messages": incoming_messages,
@@ -354,7 +438,7 @@ async def chat(request: Request, token: str = Depends(get_token)):
         res.raise_for_status()
         res_json = res.json()
 
-        # Autonomous Tool Execution Loop
+        # Autonomous Tool & Micro-Agent Execution Loop
         response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
         tool_call = extract_tool_call(response_text)
         if tool_call:
@@ -374,6 +458,11 @@ async def chat(request: Request, token: str = Depends(get_token)):
                 if path:
                     ok = memory_manager.save_workspace_file(path, content)
                     output_str = f"File '{path}' saved successfully." if ok else f"Failed to save '{path}'."
+            elif tool_name in ["spawn_agent", "delegate", "micro_agent"]:
+                agent_name = tool_call.get("agent") or tool_call.get("name")
+                task_desc = tool_call.get("task") or tool_call.get("prompt", "")
+                if agent_name and task_desc:
+                    output_str = await run_micro_agent(agent_name, task_desc)
 
             if output_str:
                 incoming_messages.append({"role": "assistant", "content": response_text})
