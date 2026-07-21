@@ -109,35 +109,98 @@ const fetchGemini = async (command, image = null, file = null, history = []) => 
   }
 };
 
-const sendLocalBmoCommand = async (command, history = [], image = null, file = null, model = "ornith:9b") => {
+const sendLocalBmoCommand = async (command, history = [], image = null, file = null, model = "ornith:9b", onStatusUpdate = null) => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
   const nc = typeof command === 'string' ? command.trim() : '';
+
   let promptText = nc;
   if (file && file.content) {
     promptText = `[Attached File: ${file.name}]\n\`\`\`\n${file.content}\n\`\`\`\n\n${nc || 'Please analyze this attached file.'}`;
   }
-  const rc = promptText || (image ? "Please analyze the attached image." : "Please help with my request.");
-  const uc = image ? [{ type: "text", text: rc }, { type: "image_url", image_url: { url: image } }] : rc;
-  const msgs = [...history.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') })), { role: 'user', content: uc }];
-  
-  // Use moondream for vision tasks locally if an image is provided
-  const targetModel = image ? "moondream" : (model || "ornith:9b");
+
+  // 1. Image Pipeline: 2-Stage Moondream Optical Sensor -> BMO Core Brain
+  if (image) {
+    onStatusUpdate?.("👁️ BMO OPTICAL SENSOR ACTIVE: Analyzing image with Moondream...");
+    let imageDescription = "";
+    try {
+      const visionRes = await fetch(`${apiUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` },
+        body: JSON.stringify({
+          model: "moondream",
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: "Describe what you see in this image in clear, detailed terms." },
+              { type: "image_url", image_url: { url: image } }
+            ]
+          }]
+        })
+      });
+      if (visionRes.ok) {
+        const vData = await visionRes.json();
+        imageDescription = vData.choices?.[0]?.message?.content || "";
+      }
+    } catch (e) {
+      console.warn("Local Moondream vision request failed:", e);
+    }
+
+    // Fallback to Gemini Cloud Vision if Moondream was not available
+    if (!imageDescription) {
+      onStatusUpdate?.("☁️ Routing image to Gemini Cloud Vision...");
+      return await fetchGemini(command, image, file, history);
+    }
+
+    // Step 2: Pass Moondream's optical description into BMO's core personality model
+    onStatusUpdate?.("🤖 BMO BRAIN COMPUTING: Synthesizing personality response...");
+    const visionContextPrompt = `[BMO OPTICAL SENSOR DATA (Moondream Vision)]:
+"${imageDescription}"
+
+User Question: "${nc || 'What do you see in this image?'}"`;
+
+    const msgs = [
+      ...history.map(m => ({
+        role: m.sender === 'user' ? 'user' : 'assistant',
+        content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
+      })),
+      { role: 'user', content: visionContextPrompt }
+    ];
+
+    try {
+      const bmoRes = await fetch(`${apiUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` },
+        body: JSON.stringify({ model: model || "ornith:9b", messages: msgs })
+      });
+      if (bmoRes.ok) {
+        const data = await bmoRes.json();
+        return data.choices?.[0]?.message?.content || null;
+      }
+    } catch (e) {
+      console.error("Local BMO synthesis failed:", e);
+    }
+  }
+
+  // 2. Standard Text / File Processing
+  const rc = promptText || "Please help with my request.";
+  const msgs = [...history.map(m => ({
+    role: m.sender === 'user' ? 'user' : 'assistant',
+    content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
+  })), { role: 'user', content: rc }];
 
   try {
-    const res = await fetch(`${apiUrl}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` }, body: JSON.stringify({ model: targetModel, messages: msgs }) });
+    const res = await fetch(`${apiUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` },
+      body: JSON.stringify({ model: model || "ornith:9b", messages: msgs })
+    });
     if (res.ok) {
       const data = await res.json();
       return data.choices?.[0]?.message?.content || null;
     }
-  } catch (error) { 
-    console.warn("Local BMO request failed:", error); 
-  }
-
-  // Automatic fallback to Gemini for vision requests if local vision model is unavailable
-  if (image) {
-    console.log("📷 Auto-routing image to Gemini Cloud Vision...");
-    return await fetchGemini(command, image, file, history);
+  } catch (error) {
+    console.error("Local BMO request failed:", error);
   }
 
   return null;
@@ -470,7 +533,7 @@ export default function App() {
       brt = await fetchGemini(ci, cim, cf, fh); 
     } else { 
       setFace('O_O'); 
-      const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel); 
+      const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel, (msg) => setThinkingStatus(msg)); 
       brt = res || "BMO is computing... If there is no reply, please check local server link! ^_^;"; 
     }
 
