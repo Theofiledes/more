@@ -188,10 +188,14 @@ const sendLocalBmoCommand = async (command, history = [], image = null, file = n
 
     // Step 2: Pass Moondream's optical description into BMO's core personality model
     onStatusUpdate?.("🤖 BMO BRAIN COMPUTING: Synthesizing personality response...");
-    const visionContextPrompt = `[BMO OPTICAL SENSOR DATA (Moondream Vision)]:
+    const visionContextPrompt = `[INTERNAL BMO SUBSYSTEM DIRECTIVE - MOONDREAM OPTICAL SENSOR]:
+BMO's internal camera and Moondream Vision Subsystem processed an attached image and reported the following visual observations:
 "${imageDescription}"
 
-User Question: "${nc || 'What do you see in this image?'}"`;
+[USER QUESTION / INPUT]:
+"${nc || 'What do you see in this image?'}"
+
+DIRECTIVE FOR BMO: The visual report above was generated automatically by your internal Moondream optical vision sensor, NOT typed by the user. Respond cheerfully as BMO to the user, answering their question using your vision sensor data.`;
 
     const msgs = [
       ...history.map(m => ({
@@ -307,12 +311,12 @@ export default function App() {
       }
     }
   }, []);
-
   const [serverStatus, setServerStatus] = useState('OK');
   const [isStatusExpanded, setIsStatusExpanded] = useState(true);
   const [toastMessage, setToastMessage] = useState(null);
   const lastModelsRef = useRef([]);
   const lastStatusRef = useRef(null);
+  const consecutiveFailuresRef = useRef(0);
 
   useEffect(() => {
     setIsStatusExpanded(true);
@@ -364,39 +368,41 @@ export default function App() {
       if (res.ok) {
         const health = await res.json();
         setSystemHealth(health);
+        consecutiveFailuresRef.current = 0;
         setIsServerSleeping(false);
 
         const newStatus = health.backend === 'OK' ? 'OK' : 'RESTARTING';
         if (lastStatusRef.current !== null && lastStatusRef.current !== newStatus) {
           if (newStatus === 'OK') {
-            showToast('🟢 LINK STABLE: Server online.', 'success');
+            showToast('🟢 LINK STABLE: BMO online.', 'success');
             playChime();
-          } else {
-            showToast('🟡 SERVER RESTARTING...', 'warning');
-            playGlitch();
           }
         }
         lastStatusRef.current = newStatus;
         setServerStatus(newStatus);
       } else {
+        consecutiveFailuresRef.current += 1;
+        if (consecutiveFailuresRef.current >= 3) {
+          setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
+          setIsServerSleeping(true);
+          if (lastStatusRef.current !== 'RESTARTING') {
+            showToast('🟡 SERVER RECONNECTING...', 'warning');
+          }
+          lastStatusRef.current = 'RESTARTING';
+          setServerStatus('RESTARTING');
+        }
+      }
+    } catch (e) {
+      consecutiveFailuresRef.current += 1;
+      if (consecutiveFailuresRef.current >= 3) {
         setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
         setIsServerSleeping(true);
-        if (lastStatusRef.current !== 'RESTARTING' && lastStatusRef.current !== null) {
-          showToast('🟡 SERVER RESTARTING...', 'warning');
-          playGlitch();
+        if (lastStatusRef.current !== 'RESTARTING') {
+          showToast('🟡 SERVER RECONNECTING...', 'warning');
         }
         lastStatusRef.current = 'RESTARTING';
         setServerStatus('RESTARTING');
       }
-    } catch (e) {
-      setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
-      setIsServerSleeping(true);
-      if (lastStatusRef.current !== 'RESTARTING' && lastStatusRef.current !== null) {
-        showToast('🟡 SERVER RESTARTING...', 'warning');
-        playGlitch();
-      }
-      lastStatusRef.current = 'RESTARTING';
-      setServerStatus('RESTARTING');
     }
 
     try {
@@ -595,6 +601,11 @@ export default function App() {
       fetch(`${apiUrl}/v1/system/sleep`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${apiToken}` }
+      }).then(r => r.json()).then(data => {
+        if (data.distilled_memory) {
+          showToast(`✨ BMO REFRESHED! New memory learned.`, 'success');
+          playChime();
+        }
       }).catch(() => {});
     }
 
