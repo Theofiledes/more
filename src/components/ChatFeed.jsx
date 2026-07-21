@@ -115,9 +115,8 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                     onClick={() => setExpandedToolId(expandedToolId === msg.id ? null : msg.id)}
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-[#2d482e] text-white text-[8px] font-mono shadow-[2px_2px_0_#2d482e] transition-all active:translate-y-[1px] active:shadow-none ${getStatusColor(toolData.status)}`}
                   >
-                    {getStatusIcon(toolData.status)}
-                    <span className="font-bold uppercase">TOOL: {toolData.tool}</span>
-                    <span className="opacity-70 ml-auto">{toolData.status.toUpperCase()}</span>
+                    <span className="font-bold uppercase">TOOL: {toolData.tool || 'UNKNOWN'}</span>
+                    <span className="opacity-70 ml-auto">{(toolData.status || 'SUCCESS').toUpperCase()}</span>
                   </button>
                   
                   {expandedToolId === msg.id && toolData.stdout && (

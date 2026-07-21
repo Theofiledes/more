@@ -7,6 +7,7 @@ import Settings from './components/Settings';
 import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import OnboardingModal from './components/OnboardingModal';
+import ErrorBoundary from './components/ErrorBoundary';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { playClick, playChime, playCheer, playGlitch, playBeep, playCartridge } from './utils/soundEffects';
@@ -747,7 +748,9 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <ChatFeed messages={activeMessages} currentUser={currentUser} activeChatId={activeChatId} useCrtFilter={useCrtFilter} tts={tts} speakingMsgId={speakingMsgId} setSpeakingMsgId={setSpeakingMsgId} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+                      <ErrorBoundary>
+                        <ChatFeed messages={activeMessages} currentUser={currentUser} activeChatId={activeChatId} useCrtFilter={useCrtFilter} tts={tts} speakingMsgId={speakingMsgId} setSpeakingMsgId={setSpeakingMsgId} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+                      </ErrorBoundary>
                       {isLoading && (
                         <div className="self-start p-3 rounded-xl border-2 border-[#2d482e] shadow-[3px_3px_0_#2d482e] bg-[#9fc28e] text-[#2d482e] font-bold animate-pulse mx-3 mb-2 flex items-center gap-2 text-[10px] bmo-font">
                           <Loader2 size={14} className="animate-spin text-[#007aff] shrink-0" />
