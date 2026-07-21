@@ -192,7 +192,6 @@ const sendLocalBmoCommand = async (command, history = [], image = null, file = n
 User Question: "${nc || 'What do you see in this image?'}"`;
 
     const msgs = [
-      systemMsg,
       ...history.map(m => ({
         role: m.sender === 'user' ? 'user' : 'assistant',
         content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
