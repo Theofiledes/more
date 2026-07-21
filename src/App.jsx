@@ -120,12 +120,27 @@ const sendLocalBmoCommand = async (command, history = [], image = null, file = n
   const rc = promptText || (image ? "Please analyze the attached image." : "Please help with my request.");
   const uc = image ? [{ type: "text", text: rc }, { type: "image_url", image_url: { url: image } }] : rc;
   const msgs = [...history.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') })), { role: 'user', content: uc }];
+  
+  // Use moondream for vision tasks locally if an image is provided
+  const targetModel = image ? "moondream" : (model || "ornith:9b");
+
   try {
-    const res = await fetch(`${apiUrl}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` }, body: JSON.stringify({ model: model || "ornith:9b", messages: msgs }) });
-    if (!res.ok) throw new Error("Local BMO failed");
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content || null;
-  } catch (error) { console.error("Local BMO request failed:", error); return null; }
+    const res = await fetch(`${apiUrl}/v1/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` }, body: JSON.stringify({ model: targetModel, messages: msgs }) });
+    if (res.ok) {
+      const data = await res.json();
+      return data.choices?.[0]?.message?.content || null;
+    }
+  } catch (error) { 
+    console.warn("Local BMO request failed:", error); 
+  }
+
+  // Automatic fallback to Gemini for vision requests if local vision model is unavailable
+  if (image) {
+    console.log("📷 Auto-routing image to Gemini Cloud Vision...");
+    return await fetchGemini(command, image, file, history);
+  }
+
+  return null;
 };
 
 
