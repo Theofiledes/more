@@ -275,6 +275,7 @@ export default function App() {
   const [sfxEnabled, setSfxEnabled] = useState(() => localStorage.getItem('bmo_sfx_enabled') !== 'false');
   useEffect(() => { localStorage.setItem('bmo_sfx_enabled', sfxEnabled); }, [sfxEnabled]);
 
+  const [activeEmotion, setActiveEmotion] = useState('happy');
   const [isLoading, setIsLoading] = useState(false);
   const [thinkingStatus, setThinkingStatus] = useState('');
   const isSendingRef = useRef(false);

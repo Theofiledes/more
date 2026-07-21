@@ -270,6 +270,11 @@ async def trigger_dream(token: str = Depends(get_token)):
 async def telemetry(token: str = Depends(get_token)): 
     return {"lines": telemetry_buffer}
 
+@app.get("/v1/telemetry/state")
+@app.post("/v1/telemetry/state")
+async def telemetry_state(token: str = Depends(get_token)):
+    return {"status": "ok", "state": "nominal"}
+
 last_context_metrics = {
     "context_tokens": 350,
     "context_limit": 8192,
