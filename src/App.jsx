@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2 } from 'lucide-react';
+import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2, ChevronDown } from 'lucide-react';
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
@@ -145,6 +145,10 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(() => localStorage.getItem('bmo_auto_speak') === 'true');
   useEffect(() => { localStorage.setItem('bmo_auto_speak', autoSpeak); }, [autoSpeak]);
+
+  const [autoHideKeyboard, setAutoHideKeyboard] = useState(() => localStorage.getItem('bmo_auto_hide_keyboard') !== 'false');
+  useEffect(() => { localStorage.setItem('bmo_auto_hide_keyboard', autoHideKeyboard ? 'true' : 'false'); }, [autoHideKeyboard]);
+  const textareaRef = useRef(null);
 
   const cleanTextForTts = (text) => {
     if (!text) return '';
@@ -300,6 +304,9 @@ export default function App() {
   const handleSend = async () => {
     if (!isAuthenticated || isLoading || isSendingRef.current) return;
     if (!inputText.trim() && !pendingFile && !pendingImageUrl) return;
+    if (autoHideKeyboard) {
+      textareaRef.current?.blur();
+    }
     playBeep();
     isSendingRef.current = true;
     const ci = inputText; const cim = pendingImageUrl;
@@ -404,8 +411,9 @@ export default function App() {
                            <button type="button" onClick={() => { playClick(); setPendingFile(null); setPendingImageUrl(null); }} className="text-[#ff3b30]"><X size={14} /></button>
                         </div>
                       )}
-                      <div className="border-t-4 border-[#2d482e] bg-[#9fc28e] p-2">
-                        <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={handleKeyDown} placeholder="> TYPE..." className="w-full bg-[#b5d6a7] border-2 border-[#2d482e] text-[#2d482e] p-2 rounded resize-none focus:outline-none" rows={2} />
+                      <div className="border-t-4 border-[#2d482e] bg-[#9fc28e] p-2 flex items-center gap-2">
+                        <textarea ref={textareaRef} value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={handleKeyDown} placeholder="> TYPE..." className="flex-1 bg-[#b5d6a7] border-2 border-[#2d482e] text-[#2d482e] p-2 rounded resize-none focus:outline-none text-xs" rows={2} />
+                        <button type="button" title="Dismiss Keyboard" onClick={() => { playClick(); textareaRef.current?.blur(); }} className="p-2 bg-[#7ba068] text-[#2d482e] border-2 border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:bg-[#b5d6a7] active:translate-y-[1px] bmo-btn-tactile flex items-center justify-center h-10 w-10 shrink-0"><ChevronDown size={18} strokeWidth={3} /></button>
                       </div>
                     </>
                   )}
@@ -456,12 +464,8 @@ export default function App() {
               </div>
             </div>
             {/* LABELS & HARDWARE */}
-            <div className="h-28 mt-4 flex justify-between items-center px-2 sm:px-6 relative select-none">
-               <div className="absolute -top-6 left-6 label-font transform -rotate-12 pointer-events-none text-black font-black">UPLOAD</div>
-               <div className="absolute -top-6 left-1/2 -translate-x-1/2 label-font pointer-events-none text-black font-black">PTT</div>
-               <div className="absolute -top-6 right-10 label-font transform rotate-12 pointer-events-none text-black font-black">SEND</div>
-               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onStopTTS={onStopTTS} />
-               <div className="absolute bottom-2 right-12 label-font transform rotate-12 pointer-events-none text-black font-black">ACTION</div>
+            <div className="mt-4 px-2 sm:px-4">
+               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onClearActiveChat={handleClearActiveChat} onStopTTS={onStopTTS} />
             </div>
           </div>
           {/* DASHBOARD RIGHT PANE (Desktop Only) */}
@@ -472,7 +476,7 @@ export default function App() {
             </div>
             <div className="flex-[2] min-h-0 border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-inner">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
               <Playbook onRunMacro={(p) => { playClick(); setInputText(p); }} />
               <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center shadow-lg">
                 <span>SYSTEM STATUS: OPERATIONAL</span><span>PIXEL_FOLD_V2</span>
@@ -494,7 +498,7 @@ export default function App() {
                 <button type="button" onClick={() => { playClick(); setActiveDashboardTab('editor'); }} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
               </div>
               <div className="h-[300px] border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-2xl">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
               <Playbook onRunMacro={(p) => { playClick(); setInputText(p); setIsDashboardOverlayOpen(false); }} />
             </div>
           </div>

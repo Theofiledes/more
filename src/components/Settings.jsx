@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, ChevronDown, RefreshCw, Bug, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play } from 'lucide-react';
+import { Shield, ChevronDown, RefreshCw, Bug, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play, Keyboard } from 'lucide-react';
 import * as Sentry from "@sentry/capacitor";
 import { playClick, playChime, playBeep, playGlitch } from '../utils/soundEffects';
 
@@ -14,6 +14,8 @@ const Settings = ({
   setIsDreaming,
   autoSpeak,
   setAutoSpeak,
+  autoHideKeyboard = true,
+  setAutoHideKeyboard,
   voiceRate = 1.0,
   setVoiceRate,
   voicePitch = 1.2,
@@ -290,6 +292,28 @@ Timestamp: ${new Date().toISOString()}`;
             className={`w-10 h-5 rounded-full border-2 border-[#2d482e] transition-all relative ${autoSpeak ? 'bg-[#007aff]' : 'bg-gray-400'}`}
           >
             <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full border border-[#2d482e] transition-all ${autoSpeak ? 'left-5' : 'left-0.5'}`}></div>
+          </button>
+        </div>
+
+        {/* AUTO-HIDE KEYBOARD TOGGLE */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col">
+            <span className="text-[8px] font-bold flex items-center gap-1">
+              <Keyboard size={12} /> AUTO-HIDE KEYBOARD ON SEND
+            </span>
+            <span className="text-[6px] opacity-60">DISMISS KEYBOARD WHEN SENDING</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              playClick();
+              if (setAutoHideKeyboard) {
+                setAutoHideKeyboard(!autoHideKeyboard);
+              }
+            }}
+            className={`w-10 h-5 rounded-full border-2 border-[#2d482e] transition-all relative ${autoHideKeyboard ? 'bg-[#007aff]' : 'bg-gray-400'}`}
+          >
+            <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full border border-[#2d482e] transition-all ${autoHideKeyboard ? 'left-5' : 'left-0.5'}`}></div>
           </button>
         </div>
       </div>
