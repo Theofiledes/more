@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2, ChevronDown, GraduationCap } from 'lucide-react';
+import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2, ChevronDown, GraduationCap, Loader2 } from 'lucide-react';
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
@@ -176,6 +176,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem('bmo_sfx_enabled', sfxEnabled); }, [sfxEnabled]);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [thinkingStatus, setThinkingStatus] = useState('');
   const isSendingRef = useRef(false);
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
@@ -454,6 +455,15 @@ export default function App() {
     }
     const cam = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
     setMessages(prev => [...prev, nm]); setInputText(''); setPendingFile(null); setPendingImageUrl(null); setIsLoading(true);
+
+    if (cim) {
+      setThinkingStatus('🤖 BMO GOT YOUR IMAGE! WAKING UP VISION BRAIN... 👁️✨');
+    } else if (cf) {
+      setThinkingStatus(`📼 BMO EATING CARTRIDGE! READING ${cf.name.toUpperCase()}... 📄⚡`);
+    } else {
+      setThinkingStatus('💭 BMO COMPUTING... *BOOP BEEP BLOOP!* 🎮');
+    }
+
     let brt = "BMO COMPUTES COMMAND.";
     if (activeBrain === 'gemini') { 
       const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] })); 
@@ -581,7 +591,12 @@ export default function App() {
                   ) : (
                     <>
                       <ChatFeed messages={activeMessages} currentUser={currentUser} activeChatId={activeChatId} useCrtFilter={useCrtFilter} tts={tts} speakingMsgId={speakingMsgId} setSpeakingMsgId={setSpeakingMsgId} getApiUrl={getApiUrl} getApiToken={getApiToken} />
-                      {isLoading && <div className="self-start p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white animate-pulse mx-3 mb-2">...</div>}
+                      {isLoading && (
+                        <div className="self-start p-3 rounded-xl border-2 border-[#2d482e] shadow-[3px_3px_0_#2d482e] bg-[#9fc28e] text-[#2d482e] font-bold animate-pulse mx-3 mb-2 flex items-center gap-2 text-[10px] bmo-font">
+                          <Loader2 size={14} className="animate-spin text-[#007aff] shrink-0" />
+                          <span>{thinkingStatus || "BMO IS COMPUTING... 🎮💭"}</span>
+                        </div>
+                      )}
                       <div ref={messagesEndRef} />
                       {isEncoding && <div className="px-3 py-2 bg-[#2d482e] text-[#b5d6a7] text-[8px] text-center animate-pulse border-t-2 border-[#2d482e]">[ENCODING OPTICAL DATA...]</div>}
                       {!isEncoding && (pendingFile || pendingImageUrl) && (
