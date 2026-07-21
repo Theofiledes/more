@@ -78,11 +78,46 @@ const getApiUrl = () => {
 
 const getApiToken = () => import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
 
-const sendLocalBmoCommand = async (command, history = [], image = null, model = "ornith:9b") => {
+const fetchGemini = async (command, image = null, file = null, history = []) => {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) return "Gemini API Key missing in .env!";
+  const nc = typeof command === 'string' ? command.trim() : '';
+  let promptText = nc;
+  if (file && file.content) {
+    promptText = `[Attached File: ${file.name}]\n\`\`\`\n${file.content}\n\`\`\`\n\n${nc || 'Please analyze this attached file.'}`;
+  }
+  const contents = [...history];
+  const userParts = [{ text: promptText || (image ? "Please analyze this image." : "Hello BMO!") }];
+  if (image) {
+    const base64Data = image.split(',')[1];
+    const mimeType = image.split(';')[0].split(':')[1] || 'image/jpeg';
+    userParts.push({ inline_data: { mime_type: mimeType, data: base64Data } });
+  }
+  contents.push({ role: "user", parts: userParts });
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents })
+    });
+    if (!res.ok) throw new Error(`Gemini API returned ${res.status}`);
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "Gemini did not return a response.";
+  } catch (e) {
+    console.error("Gemini API error:", e);
+    return `Gemini Error: ${e.message}`;
+  }
+};
+
+const sendLocalBmoCommand = async (command, history = [], image = null, file = null, model = "ornith:9b") => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
   const nc = typeof command === 'string' ? command.trim() : '';
-  const rc = nc || (image ? "Please analyze the attached image." : "Please help with my request.");
+  let promptText = nc;
+  if (file && file.content) {
+    promptText = `[Attached File: ${file.name}]\n\`\`\`\n${file.content}\n\`\`\`\n\n${nc || 'Please analyze this attached file.'}`;
+  }
+  const rc = promptText || (image ? "Please analyze the attached image." : "Please help with my request.");
   const uc = image ? [{ type: "text", text: rc }, { type: "image_url", image_url: { url: image } }] : rc;
   const msgs = [...history.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') })), { role: 'user', content: uc }];
   try {
@@ -378,14 +413,24 @@ export default function App() {
     }
     playBeep();
     isSendingRef.current = true;
-    const ci = inputText; const cim = pendingImageUrl;
+    const ci = inputText; const cim = pendingImageUrl; const cf = pendingFile;
     let nm = { id: Date.now() + Math.random(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
-    if (cim) { nm.type = 'image'; nm.imageUrl = cim; nm.text = ci; } else if (pendingFile) { nm.type = 'file'; nm.fileName = pendingFile.name; }
+    if (cim) { 
+      nm.type = 'image'; nm.imageUrl = cim; nm.text = ci; 
+    } else if (cf) { 
+      nm.type = 'file'; nm.fileName = cf.name; nm.text = ci ? `${ci}\n[Attached: ${cf.name}]` : `[Attached: ${cf.name}]`; 
+    }
     const cam = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
     setMessages(prev => [...prev, nm]); setInputText(''); setPendingFile(null); setPendingImageUrl(null); setIsLoading(true);
     let brt = "BMO COMPUTES COMMAND.";
-    if (activeBrain === 'gemini') { const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] })); brt = await fetchGemini(ci, cim, fh); }
-    else { setFace('O_O'); const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, activeModel); brt = res || "BMO is computing... If there is no reply, please check local server link! ^_^;"; }
+    if (activeBrain === 'gemini') { 
+      const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] })); 
+      brt = await fetchGemini(ci, cim, cf, fh); 
+    } else { 
+      setFace('O_O'); 
+      const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel); 
+      brt = res || "BMO is computing... If there is no reply, please check local server link! ^_^;"; 
+    }
 
     setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
     const bmi = Date.now() + Math.random();
@@ -427,7 +472,11 @@ export default function App() {
         setIsEncoding(true); const r = new FileReader();
         r.onloadend = () => { setPendingImageUrl(r.result); setPendingFile(null); setIsEncoding(false); setIsEating(true); };
         r.onerror = () => setIsEncoding(false); r.readAsDataURL(f);
-      } else { setPendingFile(f); setPendingImageUrl(null); setIsEating(true); }
+      } else {
+        setIsEncoding(true); const r = new FileReader();
+        r.onloadend = () => { setPendingFile({ name: f.name, type: f.type, content: r.result }); setPendingImageUrl(null); setIsEncoding(false); setIsEating(true); };
+        r.onerror = () => setIsEncoding(false); r.readAsText(f);
+      }
     }
     e.target.value = null;
   };
