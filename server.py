@@ -180,32 +180,66 @@ async def watchdog():
             await broadcast_to_managers("\u001b[31m[WATCHDOG] Local Ollama brain unresponsive. Retrying...\u001b[0m")
             failure_count = 0
 
-async def perform_dream_synthesis():
-    if not os.path.exists("history.json"):
-        return None
-    try:
-        with open("history.json", "r") as f:
-            hist = json.load(f)
-        msgs = hist.get("messages", [])
-        if len(msgs) < 5: return None
-        text_sample = "\n".join([f"{m.get('sender', 'user')}: {m.get('text', '')}" for m in msgs[-10:] if m.get('text')])
-        if not text_sample: return None
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
 
-        model = get_available_model()
-        prompt = f"Summarize key user preferences, milestones, or important project facts from this conversation into 1 concise memory bullet point:\n\n{text_sample[:1000]}"
-        res = requests.post(f"{OLLAMA_URL}/v1/chat/completions",
-                            json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 100},
-                            timeout=30)
-        if res.ok:
-            summary = res.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            if summary:
-                fact = f"Session Milestone: {summary}"
-                memory_manager.add_fact(fact)
-                memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
-                await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] AI Memory distillation complete.\u001b[0m")
-                return fact
-    except Exception as e:
-        print("Dream synthesis error:", e)
+async def perform_dream_synthesis():
+    text_sample = ""
+    if os.path.exists("history.json"):
+        try:
+            with open("history.json", "r") as f:
+                hist = json.load(f)
+            msgs = hist.get("messages", [])
+            if msgs:
+                text_sample = "\n".join([f"{m.get('sender', 'user')}: {m.get('text', '')}" for m in msgs[-15:] if m.get('text')])
+        except Exception:
+            pass
+
+    # Fallback to scratch files & git activity if chat history is sparse
+    if not text_sample:
+        try:
+            proc = await asyncio.create_subprocess_shell("git log -n 5 --oneline", stdout=asyncio.subprocess.PIPE)
+            out, _ = await proc.communicate()
+            text_sample = f"Recent Git Commits:\n{out.decode().strip()}"
+        except Exception:
+            text_sample = "BMO app initialized with local vision, scratch storage, and full terminal control."
+
+    prompt = f"You are BMO's Dream Synthesizer. Summarize key user preferences, milestones, or important project facts from this context into 1 concise bullet point in BMO voice (max 25 words):\n\n{text_sample[:1500]}"
+
+    summary = ""
+    # 1. Try Gemini API if key is available
+    if GEMINI_API_KEY:
+        try:
+            await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Calling Gemini Cloud API for deep dream distillation...\u001b[0m")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+            g_payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            res = requests.post(url, json=g_payload, timeout=20)
+            if res.ok:
+                summary = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+        except Exception as e:
+            print("Gemini Dream Synthesis failed, falling back to local model:", e)
+
+    # 2. Fallback to Local Ollama Model if Gemini is unavailable
+    if not summary:
+        try:
+            model = get_available_model()
+            await broadcast_to_managers(f"\u001b[35m[DREAM SYNTHESIS] Using local model '{model}' for memory distillation...\u001b[0m")
+            res = requests.post(f"{OLLAMA_URL}/v1/chat/completions",
+                                json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 100},
+                                timeout=30)
+            if res.ok:
+                summary = res.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        except Exception as e:
+            print("Local Dream Synthesis error:", e)
+
+    if summary:
+        fact = f"Dream Milestone: {summary}"
+        memory_manager.add_fact(fact)
+        memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
+        await broadcast_to_managers(f"\u001b[32m[DREAM SYNTHESIS] New Memory Formed: '{summary}'\u001b[0m")
+        return summary
+
     return None
 
 async def dream_synthesis_cron():
