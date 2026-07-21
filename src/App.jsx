@@ -223,7 +223,6 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
   // 2. Standard Text / File Processing
   const rc = promptText || "Please help with my request.";
   const msgs = [
-    systemMsg,
     ...history.map(m => ({
       role: m.sender === 'user' ? 'user' : 'assistant',
       content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
