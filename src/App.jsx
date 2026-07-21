@@ -180,10 +180,8 @@ const sendLocalBmoCommand = async (command, history = [], image = null, file = n
       console.warn("Local Moondream vision request failed:", e);
     }
 
-    // Fallback to Gemini Cloud Vision if Moondream was not available
     if (!imageDescription) {
-      onStatusUpdate?.("☁️ Routing image to Gemini Cloud Vision...");
-      return await fetchGemini(command, image, file, history);
+      return "[face:thinking] BMO's local optical sensor (Moondream) is warming up in VRAM. Please try sending the image again in a moment!";
     }
 
     // Step 2: Pass Moondream's optical description into BMO's core personality model
