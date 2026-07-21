@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2, ChevronDown } from 'lucide-react';
+import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2, ChevronDown, GraduationCap } from 'lucide-react';
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
 import Settings from './components/Settings';
 import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
+import OnboardingModal from './components/OnboardingModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { playClick, playChime, playCheer, playGlitch, playBeep, playCartridge } from './utils/soundEffects';
@@ -143,6 +144,27 @@ export default function App() {
   const [isDashboardOverlayOpen, setIsDashboardOverlayOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      const completed = localStorage.getItem('bmo_onboarding_completed');
+      if (completed !== 'true') {
+        setIsOnboardingOpen(true);
+      }
+    }
+  }, []);
+
+  const [serverStatus, setServerStatus] = useState('OK');
+  const [toastMessage, setToastMessage] = useState(null);
+  const lastModelsRef = useRef([]);
+  const lastStatusRef = useRef(null);
+
+  const showToast = useCallback((text, type = 'info') => {
+    setToastMessage({ text, type });
+    setTimeout(() => setToastMessage(null), 4000);
+  }, []);
+
   const [autoSpeak, setAutoSpeak] = useState(() => localStorage.getItem('bmo_auto_speak') === 'true');
   useEffect(() => { localStorage.setItem('bmo_auto_speak', autoSpeak); }, [autoSpeak]);
 
@@ -161,29 +183,76 @@ export default function App() {
 
   const tts = useNativeTTS();
 
-  const runDiagnostic = async () => {
+  const checkBackendDeploymentStatus = useCallback(async () => {
     const apiUrl = getApiUrl();
     const apiToken = getApiToken();
+
     try {
       const res = await fetch(`${apiUrl}/v1/health`, { headers: { "Authorization": `Bearer ${apiToken}` } });
       if (res.ok) {
         const health = await res.json();
         setSystemHealth(health);
         setIsServerSleeping(false);
-        return health;
+
+        const newStatus = health.backend === 'OK' ? 'OK' : 'RESTARTING';
+        if (lastStatusRef.current !== null && lastStatusRef.current !== newStatus) {
+          if (newStatus === 'OK') {
+            showToast('🟢 LINK STABLE: Server online.', 'success');
+            playChime();
+          } else {
+            showToast('🟡 SERVER RESTARTING...', 'warning');
+            playGlitch();
+          }
+        }
+        lastStatusRef.current = newStatus;
+        setServerStatus(newStatus);
+      } else {
+        setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
+        setIsServerSleeping(true);
+        if (lastStatusRef.current !== 'RESTARTING' && lastStatusRef.current !== null) {
+          showToast('🟡 SERVER RESTARTING...', 'warning');
+          playGlitch();
+        }
+        lastStatusRef.current = 'RESTARTING';
+        setServerStatus('RESTARTING');
       }
     } catch (e) {
       setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
       setIsServerSleeping(true);
+      if (lastStatusRef.current !== 'RESTARTING' && lastStatusRef.current !== null) {
+        showToast('🟡 SERVER RESTARTING...', 'warning');
+        playGlitch();
+      }
+      lastStatusRef.current = 'RESTARTING';
+      setServerStatus('RESTARTING');
     }
-    return null;
-  };
+
+    try {
+      const mRes = await fetch(`${apiUrl}/v1/models`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+      if (mRes.ok) {
+        const data = await mRes.json();
+        const currentModels = data.models || [];
+        if (lastModelsRef.current.length > 0) {
+          const added = currentModels.filter(m => !lastModelsRef.current.includes(m));
+          if (added.length > 0) {
+            showToast(`🔵 NEW MODEL LOADED: ${added[0].toUpperCase()}`, 'info');
+            playChime();
+          }
+        }
+        lastModelsRef.current = currentModels;
+      }
+    } catch (e) { }
+  }, [showToast]);
+
+  const runDiagnostic = useCallback(async () => {
+    await checkBackendDeploymentStatus();
+  }, [checkBackendDeploymentStatus]);
 
   useEffect(() => {
-    const interval = setInterval(runDiagnostic, 3000);
-    runDiagnostic();
+    checkBackendDeploymentStatus();
+    const interval = setInterval(checkBackendDeploymentStatus, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [checkBackendDeploymentStatus]);
 
   useEffect(() => {
     const syncState = async () => {
@@ -382,11 +451,29 @@ export default function App() {
                 <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
                   <button type="button" onClick={() => { playClick(); setIsMenuOpen(true); }} className="text-[#2d482e] hover:text-[#007aff] transition-colors"><Menu size={20} strokeWidth={3} /></button>
                   <div className={`text-lg sm:text-xl font-bold tracking-widest text-[#2d482e] transition-all duration-200 ${isHappy ? 'animate-face-pop scale-125 text-green-900' : ''}`}>{face}</div>
-                  <div className="flex gap-2">
-                    {systemHealth.backend === 'OK' && systemHealth.ollama === 'OK' ? <ShieldCheck size={16} className="text-green-700" /> : <ShieldAlert size={16} className="text-red-700" />}
+                  <div className="flex items-center gap-1">
+                    {serverStatus === 'OK' && systemHealth.backend === 'OK' ? (
+                      <span className="bg-[#2d482e] text-[#b5d6a7] px-2 py-0.5 rounded text-[7px] sm:text-[8px] font-bold flex items-center gap-1 border border-[#b5d6a7] shadow-[1px_1px_0_black]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                        🟢 LINK STABLE
+                      </span>
+                    ) : (
+                      <span className="bg-[#ffcc00] text-[#2d482e] px-2 py-0.5 rounded text-[7px] sm:text-[8px] font-bold flex items-center gap-1 border border-[#2d482e] shadow-[1px_1px_0_black] animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-600"></span>
+                        🟡 SERVER RESTARTING...
+                      </span>
+                    )}
                   </div>
                 </header>
                 <div className="flex-1 overflow-hidden flex flex-col relative">
+                  {toastMessage && (
+                    <div className="absolute top-2 left-2 right-2 z-30 bg-[#2d482e] text-[#b5d6a7] border-2 border-[#b5d6a7] px-3 py-2 rounded-lg text-[9px] font-bold shadow-xl flex items-center justify-between animate-in slide-in-from-top duration-300">
+                      <span className="truncate">{toastMessage.text}</span>
+                      <button type="button" onClick={() => setToastMessage(null)} className="text-white hover:text-red-400 ml-2">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
                   {isServerSleeping ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
                       <div className="text-4xl mb-4">z_z</div><p className="mb-2">OFFLINE...</p>
@@ -435,6 +522,7 @@ export default function App() {
                          }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🔊 WAKE & SYNC</button>
                          <button type="button" onClick={() => { playClick(); setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🎮 BMO DASHBOARD</button>
                          <button type="button" onClick={() => { playClick(); setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white] bmo-btn-tactile">📟 SYSTEM TERMINAL</button>
+                         <button type="button" onClick={() => { playChime(); setIsOnboardingOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#34c759] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🎓 REPLAY TUTORIAL</button>
                          <button type="button" onClick={() => { playClick(); setUseCrtFilter(!useCrtFilter); }} className={`w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bmo-btn-tactile ${useCrtFilter ? 'bg-[#7ba068] text-[#2d482e] shadow-[1px_1px_0_black]' : 'bg-gray-300 text-black shadow-[1px_1px_0_black]'}`}>BMO CRT FILTER: {useCrtFilter ? 'ON' : 'OFF'}</button>
                          <button type="button" onClick={() => { playChime(); setActiveBrain(b => b === 'local' ? 'gemini' : 'local'); }} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors bmo-btn-tactile ${activeBrain === 'local' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#007aff] text-white shadow-[1px_1px_0_black]'}`}>{activeBrain === 'local' ? '🤖 LOCAL BMO (OLLAMA)' : '☁️ GEM BMO (CLOUD)'}</button>
                       </div>
@@ -476,7 +564,7 @@ export default function App() {
             </div>
             <div className="flex-[2] min-h-0 border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-inner">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} onReplayTutorial={() => setIsOnboardingOpen(true)} />
               <Playbook onRunMacro={(p) => { playClick(); setInputText(p); }} />
               <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center shadow-lg">
                 <span>SYSTEM STATUS: OPERATIONAL</span><span>PIXEL_FOLD_V2</span>
@@ -498,7 +586,7 @@ export default function App() {
                 <button type="button" onClick={() => { playClick(); setActiveDashboardTab('editor'); }} className={`flex-1 py-2 text-[10px] bmo-font rounded transition-all ${activeDashboardTab === 'editor' ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#b5d6a7]'}`}>BRAIN_EDITOR</button>
               </div>
               <div className="h-[300px] border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-2xl">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
-              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} />
+              <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} onReplayTutorial={() => setIsOnboardingOpen(true)} />
               <Playbook onRunMacro={(p) => { playClick(); setInputText(p); setIsDashboardOverlayOpen(false); }} />
             </div>
           </div>
@@ -512,6 +600,8 @@ export default function App() {
             <div className="flex-1 overflow-hidden border-2 border-[#b5d6a7] rounded-lg shadow-inner"><TelemetryTerminal /></div>
           </div>
         )}
+
+        <OnboardingModal isOpen={isOnboardingOpen} onClose={() => setIsOnboardingOpen(false)} />
       </div>
     </>
   );

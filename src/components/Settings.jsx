@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, ChevronDown, RefreshCw, Bug, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play, Keyboard } from 'lucide-react';
+import { Shield, ChevronDown, RefreshCw, Bug, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play, Keyboard, Sparkles } from 'lucide-react';
 import * as Sentry from "@sentry/capacitor";
 import { playClick, playChime, playBeep, playGlitch } from '../utils/soundEffects';
 
@@ -26,7 +26,8 @@ const Settings = ({
   currentUser = 'Anthony',
   systemHealth = { backend: 'OFFLINE' },
   getApiUrl,
-  getApiToken
+  getApiToken,
+  onReplayTutorial
 }) => {
   const [dynamicModels, setDynamicModels] = useState([]);
   const [customUrl, setCustomUrl] = useState(() => localStorage.getItem('bmo_custom_api_url') || '');
@@ -395,6 +396,17 @@ Timestamp: ${new Date().toISOString()}`;
         >
           {copiedDiag ? <Check size={12} className="text-green-800" /> : <Copy size={12} />}
           {copiedDiag ? 'DIAGNOSTICS COPIED!' : 'QUICK SHARE DIAGNOSTICS'}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            playChime();
+            onReplayTutorial?.();
+          }}
+          className="w-full py-2 bg-[#34c759] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[8px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none uppercase transition-all bmo-btn-tactile"
+        >
+          <Sparkles size={12} /> REPLAY INTERACTIVE TUTORIAL
         </button>
       </div>
 
