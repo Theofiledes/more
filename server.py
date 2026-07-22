@@ -461,8 +461,9 @@ async def metrics(token: str = Depends(get_token)):
 
 def build_system_prompt():
     soul = memory_manager.get_workspace_file("SOUL.md") or "You are BMO."
-    facts = memory_manager.get_recent_facts_summary(limit=3)
-    return f"{soul}\n\n### RECENT MEMORY FACTS:\n{facts}"
+    agents = memory_manager.get_workspace_file("AGENTS.md") or ""
+    facts = memory_manager.get_recent_facts_summary(limit=5)
+    return f"{soul}\n\n### BMO MICRO-AGENTS & SUB-ROUTINE PLAYBOOKS:\n{agents}\n\n### RECENT MEMORY FACTS:\n{facts}"
 
 @app.get("/v1/models")
 async def list_models(token: str = Depends(get_token)):

@@ -69,8 +69,8 @@ const TelemetryTerminal = () => {
 
     fetchTelemetry();
     fetchMetrics();
-    pollInterval = setInterval(fetchTelemetry, 3000);
-    metricsInterval = setInterval(fetchMetrics, 5000);
+    pollInterval = setInterval(fetchTelemetry, 1500);
+    metricsInterval = setInterval(fetchMetrics, 2500);
     
     return () => {
       clearInterval(pollInterval);
