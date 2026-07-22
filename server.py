@@ -505,6 +505,17 @@ async def list_models(token: str = Depends(get_token)):
 def extract_tool_call(text: str):
     if not text: return None
     text_clean = text.strip()
+    # Check inside markdown ```json ... ``` blocks first
+    if "```" in text_clean:
+        match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text_clean, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(1))
+                if isinstance(parsed, dict) and ("tool" in parsed or "tool_call" in parsed):
+                    return parsed
+            except Exception:
+                pass
+
     start = text_clean.find('{')
     end = text_clean.rfind('}')
     if start != -1 and end != -1 and end > start:
@@ -588,9 +599,11 @@ async def chat(request: Request, token: str = Depends(get_token)):
                 path = tool_call.get("path")
                 if path:
                     output_str = memory_manager.get_workspace_file(path) or f"File '{path}' not found."
-            elif tool_name == "write_file":
-                path = tool_call.get("path")
+            elif tool_name in ["write_file", "create_file", "save_file", "write"]:
+                path = tool_call.get("path") or tool_call.get("filename") or tool_call.get("file")
                 content = tool_call.get("content", "")
+                if isinstance(content, str):
+                    content = re.sub(r'\[face:\s*([a-zA-Z0-9_-]+)\]', '', content).strip()
                 if path:
                     ok = memory_manager.save_workspace_file(path, content)
                     output_str = f"File '{path}' saved successfully." if ok else f"Failed to save '{path}'."

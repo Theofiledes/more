@@ -48,19 +48,22 @@ class MemoryManager:
         return filename
 
     def get_workspace_file(self, filename):
-        allowed = ["SOUL.md", "AGENTS.md", "MEMORY.md"]
-        if filename not in allowed: return None
-        path = self._get_path(filename)
-        if os.path.exists(path):
-            with open(path, "r") as f: return f.read()
-        return f"# {filename}\nBMO workspace file initialized."
+        if not filename: return None
+        clean_path = os.path.normpath(filename).lstrip('/')
+        if clean_path.startswith(".."): return None
+        if os.path.exists(clean_path):
+            with open(clean_path, "r", encoding="utf-8") as f: return f.read()
+        return None
 
     def save_workspace_file(self, filename, content, append=False):
-        allowed = ["SOUL.md", "AGENTS.md", "MEMORY.md"]
-        if filename not in allowed: return False
-        path = self._get_path(filename)
+        if not filename: return False
+        clean_path = os.path.normpath(filename).lstrip('/')
+        if clean_path.startswith(".."): return False
+        dir_name = os.path.dirname(clean_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         mode = "a" if append else "w"
-        with open(path, mode) as f: f.write(content)
+        with open(clean_path, mode, encoding="utf-8") as f: f.write(content)
         return True
 
     def get_recent_facts_summary(self, limit=5):

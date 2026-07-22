@@ -45,6 +45,15 @@ When writing or editing a file, output valid JSON:
 }
 ```
 
+When delegating code refactoring or tasks to micro-agents (such as `@aider_architect`, `@android_debugger`, `@ui_polisher`), output valid JSON:
+```json
+{
+  "tool": "micro_agent",
+  "agent": "@aider_architect",
+  "task": "<detailed coding task for Aider>"
+}
+```
+
 IMPORTANT: Output the JSON tool block cleanly so the backend executor can run it immediately for you!
 
 ## 4. Safety & Guidelines
