@@ -29,8 +29,11 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 CLOUD_API_URL = os.getenv("CLOUD_API_URL", "https://generativelanguage.googleapis.com")
 API_TOKEN = os.getenv("API_TOKEN", "bmo-secret-key-2026")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "ornith:9b")
+WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGS_DIR = os.path.join(WORKSPACE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
 
-SCRATCH_DIR = os.path.join(os.getcwd(), "scratch")
+SCRATCH_DIR = os.path.join(WORKSPACE_DIR, "scratch")
 os.makedirs(SCRATCH_DIR, exist_ok=True)
 
 def save_payload_media_to_scratch(messages):
@@ -148,18 +151,37 @@ class ConnectionManager:
 manager = ConnectionManager()
 telemetry_buffer = []
 
+def write_hourly_log(msg: str):
+    """Write telemetry message to hourly rotating log file."""
+    try:
+        clean_msg = re.sub(r'\x1b\[[0-9;]*m', '', msg)
+        hour_str = datetime.now().strftime("%Y-%m-%d_%H")
+        log_file = os.path.join(LOGS_DIR, f"bmo_telemetry_{hour_str}.log")
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {clean_msg}\n")
+    except Exception:
+        pass
+
 async def broadcast_to_managers(msg: str):
     telemetry_buffer.append(msg)
     if len(telemetry_buffer) > 1000: telemetry_buffer.pop(0)
+    write_hourly_log(msg)
     await manager.broadcast(msg)
 
 def get_available_model():
     try:
         res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         if res.ok:
-            models = res.json().get("models", [])
-            if models:
-                return models[0]["name"]
+            models = [m["name"] for m in res.json().get("models", [])]
+            # Exclude moondream and vision-only models from primary LLM selection
+            chat_models = [m for m in models if "moondream" not in m and "llava" not in m]
+            if chat_models:
+                for cm in chat_models:
+                    if "ornith" in cm:
+                        return cm
+                return chat_models[0]
+            elif models:
+                return models[0]
     except Exception:
         pass
     return DEFAULT_MODEL
@@ -269,9 +291,13 @@ async def pre_warm_brain():
         await broadcast_to_managers(f"\u001b[33m[SYSTEM] Pre-warm note: {e}\u001b[0m")
 
 async def heartbeat():
+    last_state = None
     while True:
-        await asyncio.sleep(15)
-        await broadcast_to_managers("\u001b[35m[HEARTBEAT] SYSTEM NOMINAL\u001b[0m")
+        await asyncio.sleep(60)
+        current_state = f"Task: {executor.current_task} | Model: {get_available_model()}"
+        if current_state != last_state:
+            last_state = current_state
+            await broadcast_to_managers(f"\u001b[35m[STATE CHANGE] {current_state}\u001b[0m")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
