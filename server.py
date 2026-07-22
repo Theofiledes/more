@@ -622,10 +622,25 @@ async def chat(request: Request, token: str = Depends(get_token)):
                     output_str = await run_micro_agent(agent_name, task_desc)
 
             if output_str:
-                incoming_messages.append({"role": "assistant", "content": response_text})
-                incoming_messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{output_str}\n\nPlease summarize the output for the user."})
-                payload["messages"] = incoming_messages
-                followup_res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
+                clean_messages = []
+                for m in incoming_messages:
+                    content = m.get("content")
+                    if isinstance(content, list):
+                        text_parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
+                        content = " ".join(text_parts) if text_parts else "Attached media"
+                    clean_messages.append({"role": m.get("role", "user"), "content": str(content or "")})
+                
+                clean_messages.append({"role": "assistant", "content": str(response_text)})
+                clean_messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{output_str}\n\nPlease summarize the result cleanly for Anthony."})
+                
+                followup_payload = {
+                    "model": target_model,
+                    "messages": clean_messages,
+                    "stream": False
+                }
+                
+                await broadcast_to_managers(f"\u001b[33m[BRAIN RUNNING] Model '{target_model}' processing tool followup in VRAM...\u001b[0m")
+                followup_res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=followup_payload, timeout=180)
                 if followup_res.ok:
                     return followup_res.json()
 
