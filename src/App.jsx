@@ -306,7 +306,8 @@ export default function App() {
   const [activeDashboardTab, setActiveDashboardTab] = useState('telemetry');
   const [isTerminalOverlayOpen, setIsTerminalOverlayOpen] = useState(false);
   const [isDashboardOverlayOpen, setIsDashboardOverlayOpen] = useState(false);
-  const [pinInput, setPinInput] = useState('');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [showAgentMenu, setShowAgentMenu] = useState(false);
 
   const handleInputChange = (e) => {
