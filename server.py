@@ -551,7 +551,13 @@ async def chat(request: Request, token: str = Depends(get_token)):
     except Exception:
         pass
 
-    if not target_model or (installed_models and target_model not in installed_models):
+    if target_model and installed_models and target_model not in installed_models:
+        matching = [m for m in installed_models if target_model in m]
+        if matching:
+            target_model = matching[0]
+        else:
+            target_model = available_model
+    elif not target_model:
         target_model = available_model
 
     incoming_messages = body.get("messages", [])
@@ -562,7 +568,7 @@ async def chat(request: Request, token: str = Depends(get_token)):
         incoming_messages = incoming_messages[-10:]
 
     # Inject BMO SOUL & Memory System Prompt if not present (Bypass for moondream vision model)
-    if target_model != "moondream":
+    if "moondream" not in target_model:
         system_prompt = build_system_prompt()
         if not incoming_messages or incoming_messages[0].get("role") != "system":
             incoming_messages.insert(0, {"role": "system", "content": system_prompt})
@@ -577,6 +583,59 @@ async def chat(request: Request, token: str = Depends(get_token)):
     last_context_metrics["context_limit"] = limit_tokens
     last_context_metrics["context_percent"] = context_percent
     last_context_metrics["active_messages"] = len(incoming_messages)
+
+    # Special Vision Handling for Moondream / Ollama native /api/chat endpoint
+    if "moondream" in target_model or any(isinstance(m.get("content"), list) for m in incoming_messages if isinstance(m, dict)):
+        native_messages = []
+        for m in incoming_messages:
+            if not isinstance(m, dict): continue
+            role = m.get("role", "user")
+            content = m.get("content")
+            text_str = ""
+            images_list = []
+            
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            text_str += item.get("text", "") + " "
+                        elif item.get("type") == "image_url":
+                            url = item.get("image_url", {}).get("url", "")
+                            if "," in url:
+                                raw_b64 = url.split(",", 1)[1]
+                                images_list.append(raw_b64)
+            else:
+                text_str = str(content or "")
+
+            n_msg = {"role": role, "content": text_str.strip()}
+            if images_list:
+                n_msg["images"] = images_list
+            native_messages.append(n_msg)
+
+        native_payload = {
+            "model": target_model,
+            "messages": native_messages,
+            "stream": False
+        }
+        await broadcast_to_managers(f"\u001b[33m[BRAIN RUNNING] Vision Model '{target_model}' processing optical image data in VRAM...\u001b[0m")
+        try:
+            res = requests.post(f"{OLLAMA_URL}/api/chat", json=native_payload, timeout=180)
+            res.raise_for_status()
+            out_msg = res.json().get("message", {}).get("content", "")
+            await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Vision Model '{target_model}' generated optical description ({len(out_msg)} chars).\u001b[0m")
+            return {
+                "id": f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": target_model,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": out_msg}, "finish_reason": "stop"}]
+            }
+        except Exception as ve:
+            err_detail = str(ve)
+            if hasattr(ve, "response") and ve.response is not None:
+                err_detail += f" | Response: {ve.response.text}"
+            print("Vision Exception:", err_detail)
+            raise HTTPException(status_code=500, detail=f"Moondream vision error: {err_detail}")
 
     payload = {
         "model": target_model,
