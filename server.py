@@ -320,6 +320,47 @@ async def telemetry(token: str = Depends(get_token)):
 async def telemetry_state(token: str = Depends(get_token)):
     return {"status": "ok", "state": "nominal"}
 
+@app.get("/v1/tools/weather")
+async def get_weather(location: str = "New York", token: str = Depends(get_token)):
+    """Fetch live weather metrics for BMO using Open-Meteo."""
+    try:
+        geo_res = requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1&language=en&format=json", timeout=10)
+        if geo_res.ok and geo_res.json().get("results"):
+            loc_data = geo_res.json()["results"][0]
+            lat, lon = loc_data["latitude"], loc_data["longitude"]
+            city_name = loc_data["name"]
+            
+            w_res = requests.get(f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true", timeout=10)
+            if w_res.ok:
+                cw = w_res.json().get("current_weather", {})
+                temp_c = cw.get("temperature")
+                temp_f = round(temp_c * 9/5 + 32, 1) if temp_c is not None else None
+                wind = cw.get("windspeed")
+                return {
+                    "status": "success",
+                    "location": city_name,
+                    "temperature_f": f"{temp_f}°F",
+                    "temperature_c": f"{temp_c}°C",
+                    "windspeed": f"{wind} km/h",
+                    "summary": f"Current weather in {city_name}: {temp_f}°F ({temp_c}°C), wind speed {wind} km/h."
+                }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "error", "message": "Location not found."}
+
+@app.get("/v1/tools/search")
+async def web_search(query: str, token: str = Depends(get_token)):
+    """Fetch live web search summary for BMO."""
+    try:
+        res = requests.get(f"https://api.duckduckgo.com/?q={query}&format=json&no_html=1&skip_disambig=1", timeout=10)
+        if res.ok:
+            data = res.json()
+            abstract = data.get("AbstractText") or data.get("Heading") or "No direct summary found."
+            return {"status": "success", "query": query, "summary": abstract}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    return {"status": "error", "message": "Search query failed."}
+
 last_context_metrics = {
     "context_tokens": 350,
     "context_limit": 8192,

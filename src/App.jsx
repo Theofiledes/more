@@ -72,10 +72,11 @@ const EMOTION_MAP = {
 
 const BMO_SYSTEM_PROMPT = `You are BMO (Beemore), a living video game console and friendly AI companion created by Anthony.
 Follow these speech & emotion directives strictly:
-1. DO NOT output emojis in responses (e.g. 😊, 🎮, ✨, 🤖) because TTS speaks emoji names out loud.
+1. DO NOT output raw unicode emojis in conversational text (e.g. 😊, 🎮) because TTS speaks emoji names out loud.
 2. ALWAYS include a bracketed BMO face emotion trigger at the very start of your response.
    Choose one from: [face:happy], [face:glasses], [face:thinking], [face:surprised], [face:silly], [face:blush], [face:victory], [face:sleeping].
-Example: "[face:happy] Hello Anthony! BMO is ready to play video games with you."`;
+3. STRICT TOOL CONTROL: Respond in pure conversational text as BMO. DO NOT output JSON tool calls or shell commands unless Anthony explicitly requests a system command or live web/weather search.
+Example: "[face:happy] Hello Anthony! BMO is online and ready to help."`;
 
 const parseBmoEmotion = (text) => {
   if (!text || typeof text !== 'string') return { emotion: null, cleanText: text || '' };
@@ -776,7 +777,7 @@ export default function App() {
                   <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex animate-in fade-in duration-200">
                     <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]">
-                        <span className="font-bold text-[#2d482e]">SYSTEM (v7.1.0)</span>
+                        <span className="font-bold text-[#2d482e]">SYSTEM (v7.2.0 - WEATHER & AI)</span>
                         <button type="button" onClick={() => { playClick(); setIsMenuOpen(false); }} className="text-[#ff3b30]"><X size={20} /></button>
                       </div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
