@@ -441,8 +441,16 @@ async def run_micro_agent(agent_name: str, task_desc: str):
     
     if agent_info.get("type") == "cli":
         try:
-            cmd = f"/home/anthony/.local/bin/aider --yes-always --message {json.dumps(task_desc)}"
-            proc = await asyncio.create_subprocess_shell(cmd, cwd=WORKSPACE_DIR, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            gem_key = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY", "")
+            env_vars = os.environ.copy()
+            if gem_key:
+                env_vars["GEMINI_API_KEY"] = gem_key
+                model_flag = "--model gemini/gemini-flash-latest"
+            else:
+                model_flag = "--model ollama/ornith:9b --openai-api-base http://127.0.0.1:11434/v1"
+            
+            cmd = f"/home/anthony/.local/bin/aider {model_flag} --yes-always --message {json.dumps(task_desc)}"
+            proc = await asyncio.create_subprocess_shell(cmd, cwd=WORKSPACE_DIR, env=env_vars, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             stdout, stderr = await proc.communicate()
             out_str = stdout.decode().strip() or stderr.decode().strip()
             await broadcast_to_managers(f"\u001b[32m[MICRO-AGENT {agent_name}] Aider execution finished.\u001b[0m")
