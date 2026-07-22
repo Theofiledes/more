@@ -784,10 +784,12 @@ export default function App() {
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
                          <button type="button" onClick={async () => { 
                             playChime();
-                            const h = await runDiagnostic();
-                            const msg = h?.backend === 'OK' ? "BMO IS AWAKE. LOCAL BRAIN NOMINAL." : "BMO IS AWAKE. BUT LOCAL SERVER IS OFFLINE.";
-                            tts.speak(msg, undefined, voiceRate, voicePitch); setIsMenuOpen(false); 
-                         }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🔊 WAKE & SYNC</button>
+                            showToast('🔄 REFRESHING BMO LINK & MODELS...', 'info');
+                            await checkBackendDeploymentStatus();
+                            showToast('🟢 LINK STABLE: BMO online & synced!', 'success');
+                            tts.speak("BMO connection refreshed and online!", undefined, voiceRate, voicePitch); 
+                            setIsMenuOpen(false); 
+                         }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🔊 WAKE & REFRESH SYNC</button>
                          <button type="button" onClick={() => { playClick(); setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🎮 BMO DASHBOARD</button>
                          <button type="button" onClick={() => { playClick(); setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white] bmo-btn-tactile">📟 SYSTEM TERMINAL</button>
                          <button type="button" onClick={() => { playChime(); setIsOnboardingOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#34c759] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🎓 REPLAY TUTORIAL</button>

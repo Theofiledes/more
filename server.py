@@ -398,6 +398,11 @@ MICRO_AGENTS = {
     "@dream_synthesizer": {
         "model": "ornith:9b",
         "prompt": "You are @dream_synthesizer. Perform memory distillation on recent history, extract key milestones, and update MEMORY.md."
+    },
+    "@aider_architect": {
+        "type": "cli",
+        "cmd": "/home/anthony/.local/bin/aider",
+        "prompt": "Invoke Aider CLI assistant for automated multi-file code refactoring in /home/anthony/Desktop/bmoapp/."
     }
 }
 
@@ -408,6 +413,17 @@ async def run_micro_agent(agent_name: str, task_desc: str):
     
     await broadcast_to_managers(f"\u001b[35m[MICRO-AGENT {agent_name}] Spawning sub-routine for task: '{task_desc[:60]}'...\u001b[0m")
     
+    if agent_info.get("type") == "cli":
+        try:
+            cmd = f"/home/anthony/.local/bin/aider --yes-always --message {json.dumps(task_desc)}"
+            proc = await asyncio.create_subprocess_shell(cmd, cwd=WORKSPACE_DIR, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await proc.communicate()
+            out_str = stdout.decode().strip() or stderr.decode().strip()
+            await broadcast_to_managers(f"\u001b[32m[MICRO-AGENT {agent_name}] Aider execution finished.\u001b[0m")
+            return f"[{agent_name} DELEGATED AIDER RESULT]:\n{out_str[:1500]}"
+        except Exception as e:
+            return f"[{agent_name} CLI ERROR]: {e}"
+
     sub_payload = {
         "model": agent_info["model"],
         "messages": [
@@ -499,12 +515,13 @@ async def chat(request: Request, token: str = Depends(get_token)):
     if len(incoming_messages) > 10:
         incoming_messages = incoming_messages[-10:]
 
-    # Inject BMO SOUL & Memory System Prompt if not present
-    system_prompt = build_system_prompt()
-    if not incoming_messages or incoming_messages[0].get("role") != "system":
-        incoming_messages.insert(0, {"role": "system", "content": system_prompt})
-    else:
-        incoming_messages[0]["content"] = f"{system_prompt}\n\n{incoming_messages[0]['content']}"
+    # Inject BMO SOUL & Memory System Prompt if not present (Bypass for moondream vision model)
+    if target_model != "moondream":
+        system_prompt = build_system_prompt()
+        if not incoming_messages or incoming_messages[0].get("role") != "system":
+            incoming_messages.insert(0, {"role": "system", "content": system_prompt})
+        else:
+            incoming_messages[0]["content"] = f"{system_prompt}\n\n{incoming_messages[0]['content']}"
 
     # Update Context Usage Projections
     used_tokens = estimate_tokens(incoming_messages)

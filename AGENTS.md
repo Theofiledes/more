@@ -28,3 +28,10 @@ This document defines specialized sub-routine playbooks and micro-agents used by
   1. Parse recent user interactions from `history.json`.
   2. Extract key user preferences, project facts, and milestones.
   3. Update `MEMORY.md` and SQLite `memory.db`.
+
+## 5. @aider_architect
+- **Goal**: Execute automated multi-file code refactoring using `/home/anthony/.local/bin/aider`.
+- **Workflow**:
+  1. Receive target file list and feature request from BMO.
+  2. Execute `aider --yes-always --message "<task>"` inside `/home/anthony/Desktop/bmoapp/`.
+  3. Verify git diff output and report results to BMO.
