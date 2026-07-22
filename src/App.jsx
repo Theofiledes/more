@@ -12,6 +12,14 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { playClick, playChime, playCheer, playGlitch, playBeep, playCartridge } from './utils/soundEffects';
 
+const MICRO_AGENTS_LIST = [
+  { tag: '@aider_architect', name: 'Aider Refactor', desc: 'Multi-file code editing via Aider CLI' },
+  { tag: '@android_debugger', name: 'Android Debugger', desc: 'Crash logcat & stacktrace patcher' },
+  { tag: '@ui_polisher', name: 'UI Polisher', desc: 'CSS transitions & micro-animations' },
+  { tag: '@code_auditor', name: 'Code Auditor', desc: 'Git diff & security path auditor' },
+  { tag: '@dream_synthesizer', name: 'Dream Synthesizer', desc: 'Memory distillation & milestone logging' }
+];
+
 // --- Native TTS Hook ---
 const useNativeTTS = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -299,8 +307,28 @@ export default function App() {
   const [isTerminalOverlayOpen, setIsTerminalOverlayOpen] = useState(false);
   const [isDashboardOverlayOpen, setIsDashboardOverlayOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [showAgentMenu, setShowAgentMenu] = useState(false);
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setInputText(val);
+    const lastAt = val.lastIndexOf('@');
+    if (lastAt !== -1 && !val.slice(lastAt).includes(' ')) {
+      setShowAgentMenu(true);
+    } else {
+      setShowAgentMenu(false);
+    }
+  };
+
+  const insertAgentTag = (tag) => {
+    playClick();
+    const lastAt = inputText.lastIndexOf('@');
+    const prefix = lastAt !== -1 ? inputText.slice(0, lastAt) : inputText;
+    const newText = prefix + tag + ' ';
+    setInputText(newText);
+    setShowAgentMenu(false);
+    textareaRef.current?.focus();
+  };
 
   useEffect(() => {
     if (typeof localStorage !== 'undefined') {
@@ -766,8 +794,32 @@ export default function App() {
                            <button type="button" onClick={() => { playClick(); setPendingFile(null); setPendingImageUrl(null); }} className="text-[#ff3b30]"><X size={14} /></button>
                         </div>
                       )}
-                      <div className="border-t-4 border-[#2d482e] bg-[#9fc28e] p-2 flex items-center gap-2">
-                        <textarea ref={textareaRef} value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={handleKeyDown} placeholder="> TYPE..." className="flex-1 bg-[#b5d6a7] border-2 border-[#2d482e] text-[#2d482e] p-2 rounded resize-none focus:outline-none text-xs" rows={2} />
+                      <div className="relative border-t-4 border-[#2d482e] bg-[#9fc28e] p-2 flex items-center gap-2">
+                        {showAgentMenu && (
+                          <div className="absolute bottom-full left-2 right-2 mb-1 bg-[#1a2e1d] border-2 border-[#2d482e] rounded-lg shadow-lg overflow-hidden z-30 animate-in slide-in-from-bottom-2 duration-150">
+                            <div className="px-3 py-1 bg-[#2d482e] text-[#b5d6a7] text-[9px] font-bold uppercase tracking-wider flex justify-between items-center">
+                              <span>🤖 SELECT BMO MICRO-AGENT</span>
+                              <button type="button" onClick={() => setShowAgentMenu(false)} className="text-[#ff3b30] font-bold text-xs">✕</button>
+                            </div>
+                            <div className="max-h-44 overflow-y-auto">
+                              {MICRO_AGENTS_LIST.map((ag) => (
+                                <button
+                                  key={ag.tag}
+                                  type="button"
+                                  onClick={() => insertAgentTag(ag.tag)}
+                                  className="w-full text-left p-2 hover:bg-[#2d482e] border-b border-[#2d482e]/50 last:border-0 flex flex-col transition-colors bmo-btn-tactile"
+                                >
+                                  <div className="flex justify-between items-center text-[10px] font-bold text-[#b5d6a7]">
+                                    <span>{ag.tag}</span>
+                                    <span className="text-[8px] bg-[#007aff] text-white px-1.5 py-0.5 rounded font-mono">{ag.name}</span>
+                                  </div>
+                                  <div className="text-[8px] text-gray-300 truncate">{ag.desc}</div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <textarea ref={textareaRef} value={inputText} onChange={handleInputChange} onKeyDown={handleKeyDown} placeholder="> TYPE OR USE @AGENT..." className="flex-1 bg-[#b5d6a7] border-2 border-[#2d482e] text-[#2d482e] p-2 rounded resize-none focus:outline-none text-xs" rows={2} />
                         <button type="button" title="Dismiss Keyboard" onClick={() => { playClick(); textareaRef.current?.blur(); }} className="p-2 bg-[#7ba068] text-[#2d482e] border-2 border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e] hover:bg-[#b5d6a7] active:translate-y-[1px] bmo-btn-tactile flex items-center justify-center h-10 w-10 shrink-0"><ChevronDown size={18} strokeWidth={3} /></button>
                       </div>
                     </>
