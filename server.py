@@ -565,6 +565,8 @@ async def chat(request: Request, token: str = Depends(get_token)):
         "stream": False
     }
 
+    await broadcast_to_managers(f"\u001b[33m[BRAIN RUNNING] Model '{target_model}' processing {len(incoming_messages)} messages in VRAM...\u001b[0m")
+
     try:
         res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
         if not res.ok and target_model != available_model:
@@ -572,9 +574,8 @@ async def chat(request: Request, token: str = Depends(get_token)):
             res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
         res.raise_for_status()
         res_json = res.json()
-
-        # Autonomous Tool & Micro-Agent Execution Loop
         response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+        await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars.\u001b[0m")
         tool_call = extract_tool_call(response_text)
         if tool_call:
             tool_name = tool_call.get("tool") or tool_call.get("tool_call")
