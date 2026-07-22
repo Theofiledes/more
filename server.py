@@ -90,7 +90,7 @@ class AgentExecutor:
         await self.checkpoint()
         await broadcast_fn(f"\u001b[33m[EXECUTING] {cmd}\u001b[0m")
         try:
-            self.active_process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            self.active_process = await asyncio.create_subprocess_shell(cmd, cwd=WORKSPACE_DIR, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             async def stream(pipe, prefix):
                 while True:
                     line = await pipe.readline()
@@ -109,7 +109,7 @@ class AgentExecutor:
         await broadcast_fn(f"\u001b[33m[EXECUTING] {cmd}\u001b[0m")
         output_lines = []
         try:
-            self.active_process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            self.active_process = await asyncio.create_subprocess_shell(cmd, cwd=WORKSPACE_DIR, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             async def stream(pipe, prefix):
                 while True:
                     line = await pipe.readline()
