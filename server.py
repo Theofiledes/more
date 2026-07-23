@@ -654,8 +654,13 @@ async def chat(request: Request, token: str = Depends(get_token)):
         res_json = res.json()
         response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
         await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars.\u001b[0m")
-        tool_call = extract_tool_call(response_text)
-        if tool_call:
+        # Autonomous Multi-Turn Tool & Micro-Agent Execution Loop (Up to 3 turns)
+        turn_count = 0
+        while turn_count < 3:
+            tool_call = extract_tool_call(response_text)
+            if not tool_call:
+                break
+            
             tool_name = tool_call.get("tool") or tool_call.get("tool_call")
             output_str = ""
             if tool_name == "run_command":
@@ -680,28 +685,35 @@ async def chat(request: Request, token: str = Depends(get_token)):
                 if agent_name and task_desc:
                     output_str = await run_micro_agent(agent_name, task_desc)
 
-            if output_str:
-                clean_messages = []
-                for m in incoming_messages:
-                    content = m.get("content")
-                    if isinstance(content, list):
-                        text_parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
-                        content = " ".join(text_parts) if text_parts else "Attached media"
-                    clean_messages.append({"role": m.get("role", "user"), "content": str(content or "")})
-                
-                clean_messages.append({"role": "assistant", "content": str(response_text)})
-                clean_messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{output_str}\n\nPlease summarize the result cleanly for Anthony."})
-                
-                followup_payload = {
-                    "model": target_model,
-                    "messages": clean_messages,
-                    "stream": False
-                }
-                
-                await broadcast_to_managers(f"\u001b[33m[BRAIN RUNNING] Model '{target_model}' processing tool followup in VRAM...\u001b[0m")
-                followup_res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=followup_payload, timeout=180)
-                if followup_res.ok:
-                    return followup_res.json()
+            if not output_str:
+                break
+
+            clean_messages = []
+            for m in incoming_messages:
+                content = m.get("content")
+                if isinstance(content, list):
+                    text_parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
+                    content = " ".join(text_parts) if text_parts else "Attached media"
+                clean_messages.append({"role": m.get("role", "user"), "content": str(content or "")})
+            
+            clean_messages.append({"role": "assistant", "content": str(response_text)})
+            clean_messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{output_str}\n\nPlease proceed or summarize the result cleanly for Anthony."})
+            
+            incoming_messages = clean_messages
+            payload = {
+                "model": target_model,
+                "messages": incoming_messages,
+                "stream": False
+            }
+            
+            await broadcast_to_managers(f"\u001b[33m[BRAIN RUNNING] Model '{target_model}' processing tool turn #{turn_count + 2} in VRAM...\u001b[0m")
+            followup_res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
+            if not followup_res.ok:
+                break
+            
+            res_json = followup_res.json()
+            response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+            turn_count += 1
 
         return res_json
     except Exception as e:
