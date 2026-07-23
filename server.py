@@ -652,6 +652,7 @@ async def chat(request: Request, token: str = Depends(get_token)):
             res = requests.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload, timeout=180)
         res.raise_for_status()
         res_json = res.json()
+        last_res_json = res_json
         response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
         await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars.\u001b[0m")
         # Autonomous Multi-Turn Tool & Micro-Agent Execution Loop (Up to 5 turns)
@@ -712,18 +713,23 @@ async def chat(request: Request, token: str = Depends(get_token)):
                 break
             
             res_json = followup_res.json()
+            last_res_json = res_json
             response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+            await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars on turn #{turn_count + 2}.\u001b[0m")
             turn_count += 1
 
-        # Sanitize any leftover un-executed JSON tool calls from final text output
-        if response_text and "{" in response_text and "}" in response_text:
-            response_text = re.sub(r'```(?:json)?\s*\{\s*"tool"[\s\S]*?\}\s*```', '', response_text).strip()
-            response_text = re.sub(r'\{\s*"tool"[\s\S]*?\}', '', response_text).strip()
+        # Sanitize only freestanding un-executed JSON tool blocks (not mixed into prose)
+        if response_text:
+            sanitized = re.sub(r'```(?:json)?\s*\{\s*"tool"[^`]*?\}\s*```', '', response_text, flags=re.DOTALL).strip()
+            # Only strip bare JSON blocks if they are the ONLY content
+            if sanitized != response_text:
+                response_text = sanitized if sanitized else response_text
 
-        if res_json and res_json.get("choices"):
-            res_json["choices"][0]["message"]["content"] = response_text
+        if last_res_json and last_res_json.get("choices"):
+            last_res_json["choices"][0]["message"]["content"] = response_text
 
-        return res_json
+        await broadcast_to_managers(f"\u001b[36m[RESPONSE READY] Sending {len(response_text)} chars to Anthony.\u001b[0m")
+        return last_res_json
     except Exception as e:
         # Emergency retry with available_model
         try:

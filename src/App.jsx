@@ -239,6 +239,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
   ];
 
   let statusPoll = null;
+  let lastSeenLine = '';
   if (onStatusUpdate) {
     statusPoll = setInterval(async () => {
       try {
@@ -246,15 +247,27 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
         if (tRes.ok) {
           const tData = await tRes.json();
           if (tData.lines && tData.lines.length > 0) {
-            const rawLine = tData.lines[tData.lines.length - 1];
-            const cleanLine = rawLine.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
-            if (cleanLine && (cleanLine.includes('BRAIN') || cleanLine.includes('EXECUTING') || cleanLine.includes('MICRO-AGENT') || cleanLine.includes('STATE CHANGE'))) {
-              onStatusUpdate(`⚡ ${cleanLine}`);
+            // Find the last meaningful line that changed
+            const meaningful = tData.lines.slice().reverse().find(l => {
+              const c = l.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
+              return c && (
+                c.includes('BRAIN') || c.includes('EXECUTING') ||
+                c.includes('MICRO-AGENT') || c.includes('STATE CHANGE') ||
+                c.includes('RESPONSE READY') || c.includes('TOOL') ||
+                c.includes('DREAM')
+              );
+            });
+            if (meaningful) {
+              const cleanLine = meaningful.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
+              if (cleanLine !== lastSeenLine) {
+                lastSeenLine = cleanLine;
+                onStatusUpdate(`⚡ ${cleanLine}`);
+              }
             }
           }
         }
       } catch (e) { }
-    }, 750);
+    }, 600);
   }
 
   try {
