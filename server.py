@@ -654,9 +654,9 @@ async def chat(request: Request, token: str = Depends(get_token)):
         res_json = res.json()
         response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
         await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars.\u001b[0m")
-        # Autonomous Multi-Turn Tool & Micro-Agent Execution Loop (Up to 3 turns)
+        # Autonomous Multi-Turn Tool & Micro-Agent Execution Loop (Up to 5 turns)
         turn_count = 0
-        while turn_count < 3:
+        while turn_count < 5:
             tool_call = extract_tool_call(response_text)
             if not tool_call:
                 break
@@ -714,6 +714,14 @@ async def chat(request: Request, token: str = Depends(get_token)):
             res_json = followup_res.json()
             response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
             turn_count += 1
+
+        # Sanitize any leftover un-executed JSON tool calls from final text output
+        if response_text and "{" in response_text and "}" in response_text:
+            response_text = re.sub(r'```(?:json)?\s*\{\s*"tool"[\s\S]*?\}\s*```', '', response_text).strip()
+            response_text = re.sub(r'\{\s*"tool"[\s\S]*?\}', '', response_text).strip()
+
+        if res_json and res_json.get("choices"):
+            res_json["choices"][0]["message"]["content"] = response_text
 
         return res_json
     except Exception as e:
