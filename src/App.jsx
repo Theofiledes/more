@@ -238,6 +238,25 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
     { role: 'user', content: rc }
   ];
 
+  let statusPoll = null;
+  if (onStatusUpdate) {
+    statusPoll = setInterval(async () => {
+      try {
+        const tRes = await fetch(`${apiUrl}/v1/telemetry`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+        if (tRes.ok) {
+          const tData = await tRes.json();
+          if (tData.lines && tData.lines.length > 0) {
+            const rawLine = tData.lines[tData.lines.length - 1];
+            const cleanLine = rawLine.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
+            if (cleanLine && (cleanLine.includes('BRAIN') || cleanLine.includes('EXECUTING') || cleanLine.includes('MICRO-AGENT') || cleanLine.includes('STATE CHANGE'))) {
+              onStatusUpdate(`⚡ ${cleanLine}`);
+            }
+          }
+        }
+      } catch (e) { }
+    }, 750);
+  }
+
   try {
     const res = await fetch(`${apiUrl}/v1/chat/completions`, {
       method: "POST",
@@ -250,6 +269,8 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
     }
   } catch (error) {
     console.error("Local BMO request failed:", error);
+  } finally {
+    if (statusPoll) clearInterval(statusPoll);
   }
 
   return null;
