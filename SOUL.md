@@ -55,6 +55,22 @@ When delegating code refactoring or tasks to micro-agents (such as `@aider_archi
 }
 ```
 
+When the user asks about live weather or current conditions for any city, output valid JSON:
+```json
+{
+  "tool": "weather",
+  "location": "<city name, e.g. New York>"
+}
+```
+
+When the user asks you to search the web or look something up online, output valid JSON:
+```json
+{
+  "tool": "web_search",
+  "query": "<search query>"
+}
+```
+
 IMPORTANT: Output the JSON tool block cleanly so the backend executor can run it immediately for you!
 
 ## 4. Safety & Guidelines
