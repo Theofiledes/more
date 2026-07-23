@@ -269,7 +269,10 @@ export default function App() {
   const [activeChatId, setActiveChatId] = useState(() => { const s = localStorage.getItem('bmo_active_chat_id'); return s ? parseInt(s) : null; });
   useEffect(() => { if (activeChatId) localStorage.setItem('bmo_active_chat_id', activeChatId); }, [activeChatId]);
   
-  const [activeModel, setActiveModel] = useState(() => localStorage.getItem('bmo_active_model') || 'moondream');
+  const [activeModel, setActiveModel] = useState(() => {
+    const saved = localStorage.getItem('bmo_active_model');
+    return (saved && saved !== 'moondream') ? saved : 'ornith:9b';
+  });
   useEffect(() => { localStorage.setItem('bmo_active_model', activeModel); }, [activeModel]);
   
   const [safetyStride, setSafetyStride] = useState(() => localStorage.getItem('bmo_safety_stride') !== 'false');
