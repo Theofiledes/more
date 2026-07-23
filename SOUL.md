@@ -55,7 +55,7 @@ When delegating code refactoring or tasks to micro-agents (such as `@aider_archi
 }
 ```
 
-When the user asks about live weather or current conditions for any city, output valid JSON:
+When the user asks about live weather or current conditions for any city, **ALWAYS use the `weather` tool — NEVER use `web_search` for weather**:
 ```json
 {
   "tool": "weather",

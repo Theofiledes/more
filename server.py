@@ -689,24 +689,22 @@ async def chat(request: Request, token: str = Depends(get_token)):
                 location = tool_call.get("location", "New York")
                 await broadcast_to_managers(f"\u001b[36m[TOOL: weather] Fetching live weather for '{location}'...\u001b[0m")
                 try:
-                    w_res = requests.get(f"{OLLAMA_URL.replace('localhost:11434','localhost:18789')}/v1/tools/weather?location={location}", timeout=15)
-                    if not w_res.ok:
-                        # Call Open-Meteo directly as fallback
-                        geo = requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1&language=en&format=json", timeout=10)
-                        if geo.ok and geo.json().get("results"):
-                            loc_data = geo.json()["results"][0]
-                            lat, lon = loc_data["latitude"], loc_data["longitude"]
-                            city_name = loc_data["name"]
-                            wf = requests.get(f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true", timeout=10)
-                            if wf.ok:
-                                cw = wf.json().get("current_weather", {})
-                                temp_c = cw.get("temperature")
-                                temp_f = round(temp_c * 9/5 + 32, 1) if temp_c is not None else None
-                                wind = cw.get("windspeed")
-                                output_str = f"Current weather in {city_name}: {temp_f}°F ({temp_c}°C), wind speed {wind} km/h."
+                    geo = requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1&language=en&format=json", timeout=10)
+                    if geo.ok and geo.json().get("results"):
+                        loc_data = geo.json()["results"][0]
+                        lat, lon = loc_data["latitude"], loc_data["longitude"]
+                        city_name = loc_data["name"]
+                        wf = requests.get(f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true", timeout=10)
+                        if wf.ok:
+                            cw = wf.json().get("current_weather", {})
+                            temp_c = cw.get("temperature")
+                            temp_f = round(temp_c * 9/5 + 32, 1) if temp_c is not None else None
+                            wind = cw.get("windspeed")
+                            output_str = f"Current weather in {city_name}: {temp_f}°F ({temp_c}°C), wind speed {wind} km/h."
+                        else:
+                            output_str = f"Could not fetch weather data for {location}."
                     else:
-                        w_data = w_res.json()
-                        output_str = w_data.get("summary", str(w_data))
+                        output_str = f"Location '{location}' not found."
                 except Exception as we:
                     output_str = f"Weather lookup failed: {we}"
             elif tool_name in ["web_search", "search"]:
