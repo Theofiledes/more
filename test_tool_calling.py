@@ -7,7 +7,7 @@ load_dotenv()
 
 def run_benchmark():
     api_url = os.getenv("VITE_BMO_API_URL") or "http://localhost:18789"
-    api_token = os.getenv("VITE_BMO_API_KEY") or "bmo-secret-key-2026"
+    api_token = os.getenv("VITE_BMO_API_KEY")
     full_url = f"{api_url.rstrip('/')}/v1/chat/completions"
 
     headers = {
@@ -31,7 +31,7 @@ def run_benchmark():
         print(f"📥 User Input: {test['prompt']}")
 
         payload = {
-            "model": "ornith:9b",
+            "model": os.getenv("OLLAMA_MODEL", ""),
             "messages": [
                 {"role": "user", "content": test['prompt']}
             ]

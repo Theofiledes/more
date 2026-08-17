@@ -8,7 +8,7 @@ load_dotenv()
 
 def test_bmo_chat():
     api_url = os.getenv("VITE_BMO_API_URL") or "http://localhost:18789"
-    api_token = os.getenv("VITE_BMO_API_KEY") or "bmo-secret-key-2026"
+    api_token = os.getenv("VITE_BMO_API_KEY")
 
     if not api_url or not api_token:
         print("❌ Error: VITE_BMO_API_URL or VITE_BMO_API_KEY missing from .env")
@@ -20,7 +20,7 @@ def test_bmo_chat():
     print(f"🔍 Testing BMO Chat at: {full_url}")
 
     payload = {
-        "model": "ornith:9b",
+        "model": os.getenv("OLLAMA_MODEL", ""),
         "messages": [
             {"role": "user", "content": "Hello BMO! Are you awake?"}
         ]

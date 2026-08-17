@@ -1,4 +1,4 @@
-package com.anthony.bmoapp;
+package com.bmoapp.companion;
 
 import com.getcapacitor.BridgeActivity;
 

@@ -40,4 +40,8 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- HardwareControls.jsx's push-to-talk uses getUserMedia({audio:true}); the WebView
+         bridges that to this native permission. Camera doesn't need one here — the camera
+         button opens the system camera app via an intent, not an in-app capture. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 </manifest>

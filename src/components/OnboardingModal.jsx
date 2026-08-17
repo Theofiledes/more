@@ -47,7 +47,7 @@ const STEPS = [
         <div className="grid grid-cols-2 gap-2 text-[8px] text-[#2d482e]">
           <div className="bg-[#9fc28e] p-2 border-2 border-[#2d482e] rounded flex items-center gap-1.5">
             <span className="w-4 h-4 bg-[#ffcc00] border border-[#2d482e] rounded flex items-center justify-center font-bold text-[7px]">▲</span>
-            <div><strong className="block text-[8px]">RESET (UP)</strong>Clear chat session</div>
+            <div><strong className="block text-[8px]">SCROLL (UP)</strong>Scroll chat up</div>
           </div>
           <div className="bg-[#9fc28e] p-2 border-2 border-[#2d482e] rounded flex items-center gap-1.5">
             <span className="w-4 h-4 bg-[#ffcc00] border border-[#2d482e] rounded flex items-center justify-center font-bold text-[7px]">◄</span>
@@ -59,7 +59,7 @@ const STEPS = [
           </div>
           <div className="bg-[#9fc28e] p-2 border-2 border-[#2d482e] rounded flex items-center gap-1.5">
             <span className="w-4 h-4 bg-[#ffcc00] border border-[#2d482e] rounded flex items-center justify-center font-bold text-[7px]">►</span>
-            <div><strong className="block text-[8px]">SEND (RIGHT)</strong>Submit command</div>
+            <div><strong className="block text-[8px]">RESET (RIGHT)</strong>Clear chat session</div>
           </div>
           <div className="bg-[#9fc28e] p-2 border-2 border-[#2d482e] rounded flex items-center gap-1.5">
             <span className="w-4 h-4 bg-[#34c759] text-white border border-[#1e7b36] rounded-full flex items-center justify-center font-bold text-[7px]">A</span>

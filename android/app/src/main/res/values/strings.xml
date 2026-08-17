@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">BMOApp</string>
     <string name="title_activity_main">BMOApp</string>
-    <string name="package_name">com.anthony.bmoapp</string>
-    <string name="custom_url_scheme">com.anthony.bmoapp</string>
+    <string name="package_name">com.bmoapp.companion</string>
+    <string name="custom_url_scheme">com.bmoapp.companion</string>
 </resources>

@@ -1,5 +1,5 @@
 {
-  "appId": "com.anthony.bmoapp",
+  "appId": "com.bmoapp.companion",
   "appName": "BMOApp",
   "webDir": "dist",
   "plugins": {

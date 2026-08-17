@@ -23,7 +23,7 @@ const Settings = ({
   sfxEnabled = true,
   setSfxEnabled,
   tts,
-  currentUser = 'Anthony',
+  currentUser = 'Player',
   systemHealth = { backend: 'OFFLINE' },
   getApiUrl,
   getApiToken,
@@ -49,7 +49,7 @@ const Settings = ({
           }
         }
       } catch (e) {
-        setDynamicModels(['ornith:9b']);
+        setDynamicModels([]);
       }
     };
     fetchModels();
@@ -125,7 +125,7 @@ Test Group: TEST GROUP A (STABLE)
 Active User: ${currentUser}
 Server URL: ${getApiUrl()}
 Backend Health: ${systemHealth?.backend || 'UNKNOWN'}
-Active Model: ${activeModel || 'ornith:9b'}
+Active Model: ${activeModel || 'AUTO-DETECT'}
 Voice Speed: ${voiceRate}x
 Voice Pitch: ${voicePitch}
 SFX Enabled: ${sfxEnabled ? 'YES' : 'NO'}
@@ -161,7 +161,7 @@ Timestamp: ${new Date().toISOString()}`;
           type="text"
           value={customUrl}
           onChange={handleSaveUrl}
-          placeholder="http://100.84.254.37:18789"
+          placeholder="http://localhost:18789"
           className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[9px] p-2 rounded focus:outline-none focus:ring-2 focus:ring-[#007aff]"
         />
         <div className="text-[6px] opacity-60">
@@ -173,8 +173,8 @@ Timestamp: ${new Date().toISOString()}`;
       <div className="flex flex-col gap-2">
         <div className="text-[8px] opacity-70 uppercase tracking-widest">Active Neural Engine (Dynamic)</div>
         <div className="relative">
-          <select 
-            value={activeModel || (dynamicModels[0] || 'ornith:9b')}
+          <select
+            value={activeModel || (dynamicModels[0] || '')}
             onChange={(e) => {
               playClick();
               setActiveModel(e.target.value);
@@ -186,7 +186,7 @@ Timestamp: ${new Date().toISOString()}`;
                 <option key={m} value={m}>{m.toUpperCase()}</option>
               ))
             ) : (
-              <option value="ornith:9b">ORNITH:9B (DEFAULT)</option>
+              <option value="">AUTO-DETECT</option>
             )}
           </select>
           <div className="absolute right-2 top-2.5 pointer-events-none">
@@ -194,7 +194,7 @@ Timestamp: ${new Date().toISOString()}`;
           </div>
         </div>
         <div className="text-[6px] bg-[#2d482e]/10 p-1 rounded italic text-center text-[#2d482e]">
-          Active Model: <span className="font-bold">{activeModel || 'ornith:9b'}</span>
+          Active Model: <span className="font-bold">{activeModel || 'AUTO-DETECT'}</span>
         </div>
       </div>
 

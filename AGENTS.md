@@ -30,8 +30,8 @@ This document defines specialized sub-routine playbooks and micro-agents used by
   3. Update `MEMORY.md` and SQLite `memory.db`.
 
 ## 5. @aider_architect
-- **Goal**: Execute automated multi-file code refactoring using `/home/anthony/.local/bin/aider`.
+- **Goal**: Execute automated multi-file code refactoring using the `aider` CLI (resolved from `PATH`).
 - **Workflow**:
   1. Receive target file list and feature request from BMO.
-  2. Execute `aider --yes-always --message "<task>"` inside `/home/anthony/Desktop/bmoapp/`.
+  2. Execute `aider --yes-always --message "<task>"` inside `{{WORKSPACE_DIR}}`.
   3. Verify git diff output and report results to BMO.

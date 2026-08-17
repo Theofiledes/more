@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.anthony.bmoapp"
+    namespace "com.bmoapp.companion"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.anthony.bmoapp"
+        applicationId "com.bmoapp.companion"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

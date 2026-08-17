@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Terminal, ChevronDown, Trash2, Cpu, Activity, Database } from 'lucide-react';
+import { getApiUrl, getApiToken } from '../utils/api';
 
 const TelemetryTerminal = () => {
   const [lines, setLines] = useState([]);
@@ -29,20 +30,11 @@ const TelemetryTerminal = () => {
     }).filter(p => p !== null);
   };
 
-  const getApiUrl = () => {
-    const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
-    const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-    if (isDesktopLocal) return "http://localhost:18789";
-    const envUrl = import.meta.env.VITE_BMO_API_URL;
-    if (envUrl) return envUrl.replace(/\/$/, "");
-    return "http://100.84.254.37:18789";
-  };
-
   useEffect(() => {
     let pollInterval;
     let metricsInterval;
     const apiUrl = getApiUrl();
-    const apiToken = import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
+    const apiToken = getApiToken();
 
     const fetchTelemetry = async () => {
       try {

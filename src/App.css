@@ -1,5 +1,73 @@
 /* BMO App Retro Arcade Styles & Animations */
 
+/* BmoFace.jsx — a sprite-like snap between expressions, not a morph. Motion comes
+   entirely from CSS transforms on groups; the SVG `d` attributes themselves never
+   animate/interpolate. */
+.bmo-idle .bmo-eyes {
+  animation: bmo-blink 6s infinite steps(1);
+}
+@keyframes bmo-blink {
+  0%, 93%, 100% { transform: scaleY(1); }
+  95%, 96% { transform: scaleY(0.08); }
+}
+
+.bmo-talking .bmo-mouth {
+  animation: bmo-flap 190ms infinite steps(2, jump-none) alternate;
+}
+.bmo-eating .bmo-mouth {
+  animation: bmo-flap 110ms infinite steps(2, jump-none) alternate;
+}
+@keyframes bmo-flap {
+  from { transform: scaleY(0.18); }
+  to { transform: scaleY(1); }
+}
+
+.bmo-dot {
+  animation: bmo-dot-pulse 900ms infinite steps(1);
+}
+@keyframes bmo-dot-pulse {
+  0%, 49% { opacity: 0.18; }
+  50%, 100% { opacity: 1; }
+}
+
+.bmo-glitch {
+  animation: bmo-glitch 1.6s infinite steps(1);
+}
+@keyframes bmo-glitch {
+  0%, 88%, 100% { transform: none; opacity: 1; }
+  90% { transform: translate(2px, -1px); opacity: 0.55; }
+  92% { transform: translate(-2px, 1px); }
+  94% { transform: none; opacity: 0.85; }
+}
+
+.bmo-zzz {
+  animation: bmo-zzz-float 2.4s infinite ease-out;
+}
+@keyframes bmo-zzz-float {
+  0% { opacity: 0; transform: translateY(6px) scale(0.7); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-18px) scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bmo-face, .bmo-face * {
+    animation: none !important;
+  }
+  .bmo-face .bmo-mouth { transform: scaleY(1) !important; }
+}
+
+/* Streaming reply caret */
+.bmo-caret {
+  animation: bmo-caret-blink 900ms step-end infinite;
+}
+@keyframes bmo-caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bmo-caret { animation: none; opacity: 1; }
+}
+
 /* Custom Retro Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

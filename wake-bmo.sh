@@ -1,10 +1,24 @@
 #!/bin/bash
 
 # BMO Wakeup & Service Controller
-PROJECT_DIR="/home/anthony/Desktop/bmoapp"
-TOKEN="bmo-secret-key-2026"
+PROJECT_DIR="${WORKSPACE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a
+    source "$PROJECT_DIR/.env"
+    set +a
+fi
+TOKEN="${VITE_BMO_API_KEY:?VITE_BMO_API_KEY is not set — configure it in .env (see .env.example)}"
 BMO_PORT="18789"
 OLLAMA_PORT="11434"
+# BMO can run a shell tool for the model. Binding beyond localhost means anyone who can
+# reach this host and the API token can run commands on this machine. Defaults to 0.0.0.0
+# to preserve phone/Tailscale access to this instance; set BMO_BIND_HOST=127.0.0.1 to
+# restrict to this machine only.
+BMO_BIND_HOST="${BMO_BIND_HOST:-0.0.0.0}"
+if [ "$BMO_BIND_HOST" != "127.0.0.1" ] && [ "$BMO_BIND_HOST" != "localhost" ]; then
+    echo "⚠️  BMO is binding to $BMO_BIND_HOST:$BMO_PORT — reachable by anyone who can reach this host on your network."
+    echo "    BMO can execute shell commands. Set BMO_BIND_HOST=127.0.0.1 to restrict to this machine only."
+fi
 
 # Get Tailscale IP
 IP=$(tailscale ip -4 2>/dev/null || hostname -I | awk '{print $1}')
@@ -29,7 +43,7 @@ else
     if [ -d "venv" ]; then
         source venv/bin/activate
     fi
-    nohup setsid ./venv/bin/python3 -m uvicorn server:app --host 0.0.0.0 --port "$BMO_PORT" > server.log 2>&1 & disown
+    nohup setsid ./venv/bin/python3 -m uvicorn server:app --host "$BMO_BIND_HOST" --port "$BMO_PORT" > server.log 2>&1 & disown
     echo "⏳ Waiting for BMO to stretch..."
     sleep 3
 fi
@@ -38,12 +52,12 @@ fi
 echo "--------------------------------------------------"
 echo "🎮 BMO DUAL-DASHBOARD SYSTEM ACTIVE!"
 echo ""
-echo "📟 BMO COMPANION UI (Pixel Fold Optimized):"
+echo "📟 BMO COMPANION UI:"
 echo "   🏠 Laptop: http://localhost:$BMO_PORT/?token=$TOKEN"
 echo "   📱 Phone:  http://$IP:$BMO_PORT/?token=$TOKEN"
 echo ""
 echo "🧠 OLLAMA BRAIN API:"
 echo "   🏠 Endpoint: http://localhost:$OLLAMA_PORT"
 echo "--------------------------------------------------"
-echo "Note: For the best experience on your Pixel 9 Pro Fold,"
-echo "use the dedicated BMO Android App! 🎮🤖"
+echo "Note: for phone access, use the dedicated BMO Android App,"
+echo "or open the Laptop link above in a mobile browser! 🎮🤖"

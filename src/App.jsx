@@ -8,9 +8,11 @@ import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import OnboardingModal from './components/OnboardingModal';
 import ErrorBoundary from './components/ErrorBoundary';
+import BmoFace from './components/BmoFace';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { playClick, playChime, playCheer, playGlitch, playBeep, playCartridge } from './utils/soundEffects';
+import { getApiUrl, getApiToken } from './utils/api';
 
 const MICRO_AGENTS_LIST = [
   { tag: '@aider_architect', name: 'Aider Refactor', desc: 'Multi-file code editing via Aider CLI' },
@@ -64,7 +66,21 @@ const fontStyle = `
   .real-vision { border: 2px solid #2d482e; border-radius: 4px; }
 `;
 
-const USERS = { Anthony: { pin: '8436' }, Kayla: { pin: '4321' } };
+// Cosmetic lock only — NOT security. The real access gate is the API_TOKEN the
+// server requires; anyone with it can bypass this UI entirely via the raw API.
+// Override with VITE_BMO_USERS="Name:pin,Name2:pin2" (e.g. "Anthony:8436,Kayla:4321").
+const USERS = (() => {
+  const raw = import.meta.env.VITE_BMO_USERS;
+  if (raw) {
+    const parsed = {};
+    for (const entry of raw.split(',')) {
+      const [name, pin] = entry.split(':').map(s => s.trim());
+      if (name && pin) parsed[name] = { pin };
+    }
+    if (Object.keys(parsed).length > 0) return parsed;
+  }
+  return { Player: { pin: '0000' } };
+})();
 
 const EMOTION_MAP = {
   happy: '^_^',
@@ -78,13 +94,13 @@ const EMOTION_MAP = {
   sleep: '(-_-)'
 };
 
-const BMO_SYSTEM_PROMPT = `You are BMO (Beemore), a living video game console and friendly AI companion created by Anthony.
+const BMO_SYSTEM_PROMPT = `You are BMO (Beemore), a living video game console and friendly AI companion.
 Follow these speech & emotion directives strictly:
 1. DO NOT output raw unicode emojis in conversational text (e.g. 😊, 🎮) because TTS speaks emoji names out loud.
 2. ALWAYS include a bracketed BMO face emotion trigger at the very start of your response.
    Choose one from: [face:happy], [face:glasses], [face:thinking], [face:surprised], [face:silly], [face:blush], [face:victory], [face:sleeping].
-3. STRICT TOOL CONTROL: Respond in pure conversational text as BMO. DO NOT output JSON tool calls or shell commands unless Anthony explicitly requests a system command or live web/weather search.
-Example: "[face:happy] Hello Anthony! BMO is online and ready to help."`;
+3. STRICT TOOL CONTROL: Respond in pure conversational text as BMO. DO NOT output JSON tool calls or shell commands unless the user explicitly requests a system command or live web/weather search.
+Example: "[face:happy] Hello there! BMO is online and ready to help."`;
 
 const parseBmoEmotion = (text) => {
   if (!text || typeof text !== 'string') return { emotion: null, cleanText: text || '' };
@@ -102,18 +118,6 @@ const parseToolCall = (text) => {
   } catch { }
   return null;
 };
-
-const getApiUrl = () => {
-  const customUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('bmo_custom_api_url') : null;
-  if (customUrl) return customUrl.replace(/\/$/, "");
-  const envUrl = import.meta.env.VITE_BMO_API_URL;
-  if (envUrl) return envUrl.replace(/\/$/, "");
-  const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-  if (isDesktopLocal) return "http://localhost:18789";
-  return "http://100.84.254.37:18789";
-};
-
-const getApiToken = () => import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
 
 const fetchGemini = async (command, image = null, file = null, history = []) => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
@@ -151,7 +155,7 @@ const fetchGemini = async (command, image = null, file = null, history = []) => 
   }
 };
 
-const sendLocalBmoCommand = async (command, history = [], image = null, file = null, model = "ornith:9b", onStatusUpdate = null) => {
+const sendLocalBmoCommand = async (command, history = [], image = null, file = null, model = "", onStatusUpdate = null, onPendingApproval = null) => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
   const nc = typeof command === 'string' ? command.trim() : '';
@@ -161,7 +165,9 @@ const sendLocalBmoCommand = async (command, history = [], image = null, file = n
     promptText = `[Attached File: ${file.name}]\n\`\`\`\n${file.content}\n\`\`\`\n\n${nc || 'Please analyze this attached file.'}`;
   }
 
-  const systemMsg = { role: "system", content: BMO_SYSTEM_PROMPT };
+  // Note: no client-side system prompt is sent here — server.py always injects
+  // SOUL.md as the system message for local BMO chat (server.py build_system_prompt()).
+  // BMO_SYSTEM_PROMPT above is used only by the separate Gemini-direct path.
 
   // 1. Image Pipeline: 2-Stage Moondream Optical Sensor -> BMO Core Brain
   if (image) {
@@ -217,7 +223,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
       const bmoRes = await fetch(`${apiUrl}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` },
-        body: JSON.stringify({ model: model || "ornith:9b", messages: msgs })
+        body: JSON.stringify({ model: model || "", messages: msgs })
       });
       if (bmoRes.ok) {
         const data = await bmoRes.json();
@@ -240,6 +246,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
 
   let statusPoll = null;
   let lastSeenLine = '';
+  let lastSentinelDiff = null;
   if (onStatusUpdate) {
     statusPoll = setInterval(async () => {
       try {
@@ -267,6 +274,22 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
           }
         }
       } catch (e) { }
+      // Guardian Protocol: surface a pending run_command approval, if any.
+      // Uses live executor state (not the broadcast log) so an old, already
+      // resolved pending command can never be re-surfaced as if it were new.
+      if (onPendingApproval) {
+        try {
+          const sRes = await fetch(`${apiUrl}/v1/telemetry/state`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+          if (sRes.ok) {
+            const sData = await sRes.json();
+            const pending = sData.pending_command || null;
+            if (pending !== lastSentinelDiff) {
+              lastSentinelDiff = pending;
+              if (pending) onPendingApproval(pending);
+            }
+          }
+        } catch (e) { }
+      }
     }, 600);
   }
 
@@ -274,7 +297,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
     const res = await fetch(`${apiUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` },
-      body: JSON.stringify({ model: model || "ornith:9b", messages: msgs })
+      body: JSON.stringify({ model: model || "", messages: msgs })
     });
     if (res.ok) {
       const data = await res.json();
@@ -289,12 +312,107 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
   return null;
 };
 
+// Capacitor's CapacitorHttp bridge (capacitor.config.json) patches fetch to route through
+// native HTTP, which buffers the whole response — no incremental reads. Streaming only
+// works in a real browser (web build, or the WebView with CapacitorHttp disabled).
+const canStreamHere = () => typeof window !== 'undefined' && !window.Capacitor?.isNativePlatform?.() && typeof ReadableStream !== 'undefined';
+
+/**
+ * Streams one BMO reply over SSE from /v1/chat/stream. Returns { text, emotion } where
+ * text is already face-tag-stripped by the server — callers should NOT run
+ * parseBmoEmotion() on it (see server.py chat_stream's final_text computation).
+ * callbacks: onFace(emotion), onDelta(text), onStatus(text), onPendingApproval(cmd).
+ */
+const streamLocalBmoCommand = async (command, history = [], model = "", callbacks = {}) => {
+  const apiUrl = getApiUrl();
+  const apiToken = getApiToken();
+  const { onFace, onDelta, onStatus, onPendingApproval } = callbacks;
+  const msgs = [
+    ...history.map(m => ({
+      role: m.sender === 'user' ? 'user' : 'assistant',
+      content: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]')
+    })),
+    { role: 'user', content: command || 'Please help with my request.' }
+  ];
+
+  let finalText = null, finalEmotion = null;
+  let lastSentinelDiff = null;
+  const pollForApproval = onPendingApproval ? setInterval(async () => {
+    try {
+      const sRes = await fetch(`${apiUrl}/v1/telemetry/state`, { headers: { "Authorization": `Bearer ${apiToken}` } });
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        const pending = sData.pending_command || null;
+        if (pending !== lastSentinelDiff) {
+          lastSentinelDiff = pending;
+          if (pending) onPendingApproval(pending);
+        }
+      }
+    } catch (e) { }
+  }, 600) : null;
+
+  try {
+    const res = await fetch(`${apiUrl}/v1/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` },
+      body: JSON.stringify({ model: model || "", messages: msgs })
+    });
+    if (!res.ok || !res.body) return { text: null, emotion: null };
+
+    const handleEvent = (obj) => {
+      switch (obj.type) {
+        case 'face': finalEmotion = obj.value; onFace?.(obj.value); break;
+        case 'delta': onDelta?.(obj.text); break;
+        case 'status': onStatus?.(`⚡ ${obj.text}`); break;
+        case 'gated': onStatus?.('⚡ BMO IS REACHING FOR A TOOL...'); break;
+        case 'done': finalText = obj.text; break;
+        case 'error': console.error('Stream error:', obj.message); break;
+      }
+    };
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = frame.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        try { handleEvent(JSON.parse(line.slice(5))); } catch (e) { }
+      }
+    }
+  } catch (error) {
+    console.error("Streaming BMO request failed:", error);
+  } finally {
+    if (pollForApproval) clearInterval(pollForApproval);
+  }
+
+  return { text: finalText, emotion: finalEmotion };
+};
+
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState('Anthony');
+  const [currentUser, setCurrentUser] = useState(() => Object.keys(USERS)[0]);
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
   const [isServerSleeping, setIsServerSleeping] = useState(false);
   useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
+
+  // Short viewports (a real Android soft keyboard, a floating/split browser window,
+  // a short laptop screen) must never let the face zone starve the chat feed. Below
+  // this height, the face always renders at its smallest size regardless of hero/docked.
+  const [compactViewport, setCompactViewport] = useState(() => (typeof window !== 'undefined' ? window.innerHeight < 560 : false));
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    const check = () => setCompactViewport((vv?.height ?? window.innerHeight) < 560);
+    check();
+    (vv || window).addEventListener('resize', check);
+    return () => (vv || window).removeEventListener('resize', check);
+  }, []);
   const [messages, setMessages] = useState(() => { const s = localStorage.getItem('bmo_messages'); return s ? JSON.parse(s) : []; });
   useEffect(() => { localStorage.setItem('bmo_messages', JSON.stringify(messages)); }, [messages]);
   const [inputText, setInputText] = useState(() => localStorage.getItem('bmo_input_buffer') || '');
@@ -304,8 +422,12 @@ export default function App() {
   useEffect(() => { if (activeChatId) localStorage.setItem('bmo_active_chat_id', activeChatId); }, [activeChatId]);
   
   const [activeModel, setActiveModel] = useState(() => {
+    // Moondream is vision-only and must never be the primary chat model — the
+    // installed tag is "moondream:latest", not the bare string "moondream", so a
+    // straight !== check here never actually excluded it. Matches the substring
+    // check server.py uses to route vision requests away from the streaming endpoint.
     const saved = localStorage.getItem('bmo_active_model');
-    return (saved && saved !== 'moondream') ? saved : 'ornith:9b';
+    return (saved && !saved.includes('moondream')) ? saved : '';
   });
   useEffect(() => { localStorage.setItem('bmo_active_model', activeModel); }, [activeModel]);
   
@@ -333,8 +455,8 @@ export default function App() {
   const [isEncoding, setIsEncoding] = useState(false);
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
-  const [face, setFace] = useState('^_^');
   const [pinInput, setPinInput] = useState('');
+  const [streamingText, setStreamingText] = useState('');
   const [systemHealth, setSystemHealth] = useState({ backend: 'OFFLINE', ollama: 'OFFLINE' });
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
@@ -511,40 +633,24 @@ export default function App() {
 
   const isSpeaking = tts.isSpeaking || speakingMsgId !== null;
 
+  // BmoFace derives its whole look from this — no timers, no re-renders driving
+  // string animation frames. CSS (blink/talk/glitch keyframes) does the motion.
+  // Once the first token of a streamed reply lands, show 'speaking' (chosen emotion +
+  // mouth flap) instead of the generic 'loading' dots — the face should react to text
+  // actually arriving, not just to "still waiting."
+  const faceState =
+    systemHealth.backend !== 'OK' ? 'offline'
+    : isEating ? 'eating'
+    : (isLoading && !streamingText) ? 'loading'
+    : (isSpeaking || (isLoading && streamingText)) ? 'speaking'
+    : isHappy ? 'celebrate'
+    : 'idle';
+
   useEffect(() => {
-    if (systemHealth.backend !== 'OK') { setFace('X_X'); return; }
-
-    if (isLoading) { setFace('O_O'); return; }
-    if (isEating) {
-      setFace('>_<');
-      const sw = setTimeout(() => setFace('~_~'), 500);
-      const fi = setTimeout(() => setIsEating(false), 1500);
-      return () => { clearTimeout(sw); clearTimeout(fi); };
-    }
-
-    if (isSpeaking) {
-      const frames = activeEmotion === 'glasses'
-        ? ['(⌐■o■)', '(⌐■-■)']
-        : ['^o^', '^-^', '^O^', '^=^', '^v^', '^w^'];
-      let frameIdx = 0;
-      setFace(frames[0]);
-      const animInterval = setInterval(() => {
-        frameIdx = (frameIdx + 1) % frames.length;
-        setFace(frames[frameIdx]);
-      }, 160);
-      return () => clearInterval(animInterval);
-    }
-
-    if (isHappy) { setFace('\\o/'); return; }
-
-    const baseFace = EMOTION_MAP[activeEmotion] || '^_^';
-    setFace(baseFace);
-    const blink = setInterval(() => {
-      setFace('-_-');
-      setTimeout(() => setFace(p => p === '-_-' ? (EMOTION_MAP[activeEmotion] || '^_^') : p), 200);
-    }, 4000 + Math.random() * 2000);
-    return () => clearInterval(blink);
-  }, [isLoading, isHappy, isEating, systemHealth, isSpeaking, activeEmotion]);
+    if (!isEating) return;
+    const t = setTimeout(() => setIsEating(false), 1500);
+    return () => clearTimeout(t);
+  }, [isEating]);
 
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
@@ -685,17 +791,47 @@ export default function App() {
       setThinkingStatus('💭 BMO COMPUTING... *BOOP BEEP BLOOP!* 🎮');
     }
 
-    let brt = "BMO COMPUTES COMMAND.";
-    if (activeBrain === 'gemini') { 
-      const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] })); 
-      brt = await fetchGemini(ci, cim, cf, fh); 
-    } else { 
-      setFace('O_O'); 
-      const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel, (msg) => setThinkingStatus(msg)); 
-      brt = res || "[face:happy] BMO is computing... If there is no reply, please check local server link!"; 
+    const onPendingApproval = (pendingCmd) => {
+      const sentinelId = Date.now() + Math.random();
+      setMessages(prev => [...prev, {
+        id: sentinelId, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text',
+        text: JSON.stringify({ tool: 'sentinel', status: 'pending', pending_approval: true, diff: pendingCmd })
+      }]);
+    };
+
+    let emotion = null, cleanText;
+    if (activeBrain === 'gemini') {
+      const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] }));
+      const brt = await fetchGemini(ci, cim, cf, fh);
+      ({ emotion, cleanText } = parseBmoEmotion(brt || "[face:happy] BMO is computing... If there is no reply, please check local server link!"));
+    } else if (!cim && !cf && !activeModel.includes('moondream') && canStreamHere()) {
+      // Text-only local BMO chat: stream the reply. Images/files keep the existing
+      // 2-stage Moondream path (sendLocalBmoCommand), which isn't streamed.
+      let pendPart = '', flushTimer = null;
+      const result = await streamLocalBmoCommand(ci, cam.slice(-6), activeModel, {
+        onFace: (emo) => { if (EMOTION_MAP[emo]) setActiveEmotion(emo); },
+        onStatus: (msg) => setThinkingStatus(msg),
+        onPendingApproval,
+        onDelta: (text) => {
+          pendPart += text;
+          if (!flushTimer) {
+            flushTimer = setTimeout(() => {
+              setStreamingText(s => s + pendPart);
+              pendPart = ''; flushTimer = null;
+            }, 50);
+          }
+        },
+      });
+      if (pendPart) setStreamingText(s => s + pendPart); // flush any trailing coalesced text
+      setStreamingText('');
+      cleanText = result.text || "BMO is computing... If there is no reply, please check local server link!";
+      emotion = result.emotion;
+    } else {
+      const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel, (msg) => setThinkingStatus(msg), onPendingApproval);
+      const brt = res || "[face:happy] BMO is computing... If there is no reply, please check local server link!";
+      ({ emotion, cleanText } = parseBmoEmotion(brt));
     }
 
-    const { emotion, cleanText } = parseBmoEmotion(brt);
     if (emotion && EMOTION_MAP[emotion]) {
       setActiveEmotion(emotion);
     }
@@ -753,6 +889,13 @@ export default function App() {
   const activeMessages = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
   const activeHistory = history.filter(h => h.user === currentUser);
   const onStopTTS = () => { tts.stop(); setSpeakingMsgId(null); };
+  const handleFacePoke = () => {
+    if (faceState !== 'idle') return;
+    playBeep();
+    setIsHappy(true);
+    setTimeout(() => setIsHappy(false), 900);
+  };
+  const isHeroFace = activeMessages.length === 0;
 
   return (
     <>
@@ -760,14 +903,16 @@ export default function App() {
       <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileSelect} />
       <input type="file" ref={cameraInputRef} accept="image/*" capture="environment" style={{ display: 'none' }} onChange={handleFileSelect} />
       <div className="min-h-screen bg-gray-900 flex items-center justify-center p-2 sm:p-4 font-sans selection:bg-[#2d482e] selection:text-[#b5d6a7]">
-        <div className="w-full max-w-md lg:max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6 items-start h-[95vh]">
+        <div className="w-full max-w-md lg:max-w-6xl grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch h-[95vh]">
           <div className="bg-[#5acbb5] w-full h-full rounded-[40px] shadow-[inset_0_-10px_20px_rgba(0,0,0,0.2),0_15px_30px_rgba(0,0,0,0.5)] flex flex-col p-3 sm:p-5 relative overflow-hidden border-8 border-[#4ba896]">
             <div className="flex justify-center mb-3"><div className="w-16 h-2 bg-[#2d482e] rounded-full opacity-50"></div></div>
             <div className={`bg-[#1a2e1d] rounded-[24px] p-3 flex-1 flex flex-col relative shadow-[inset_0_4px_10px_rgba(0,0,0,0.6)] overflow-hidden`}>
               <div className={`bg-[#b5d6a7] w-full h-full rounded-[12px] flex flex-col overflow-hidden relative border-4 border-[#2d482e] bmo-font text-[10px] sm:text-xs ${useCrtFilter ? 'crt-scanlines' : ''}`}>
                 <header className="border-b-4 border-[#2d482e] p-2 sm:p-3 flex justify-between items-center bg-[#9fc28e] z-10 relative">
                   <button type="button" onClick={() => { playClick(); setIsMenuOpen(true); }} className="text-[#2d482e] hover:text-[#007aff] transition-colors z-10"><Menu size={20} strokeWidth={3} /></button>
-                  <div className={`text-lg sm:text-xl font-bold tracking-widest text-[#2d482e] transition-all duration-200 absolute left-1/2 -translate-x-1/2 ${isHappy ? 'animate-face-pop scale-125 text-green-900' : ''}`}>{face}</div>
+                  <div className="text-[8px] sm:text-[9px] font-bold tracking-widest text-[#2d482e] opacity-70 absolute left-1/2 -translate-x-1/2 truncate max-w-[45%]">
+                    {activeHistory.find(h => h.id === activeChatId)?.title || 'BMO_OS'}
+                  </div>
                   <div className="flex items-center gap-1 z-10">
                     <button
                       type="button"
@@ -793,7 +938,28 @@ export default function App() {
                     </button>
                   </div>
                 </header>
-                <div className="flex-1 overflow-hidden flex flex-col relative">
+                <div
+                  className={`shrink-0 relative flex items-center justify-center bg-[#b5d6a7] border-b-2 border-dashed border-[#2d482e]/30 overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none ${
+                    compactViewport
+                      ? 'h-[56px]'
+                      : !isAuthenticated || isServerSleeping || isHeroFace ? 'h-[190px] sm:h-[220px] lg:h-[280px]' : 'h-[92px] sm:h-[104px] lg:h-[160px]'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={handleFacePoke}
+                    aria-label="BMO"
+                    className="h-full w-full max-w-[320px] px-6 py-3 outline-none"
+                  >
+                    <BmoFace emotion={activeEmotion} state={faceState} talking={isSpeaking || (isLoading && !!streamingText)} />
+                  </button>
+                  {faceState === 'loading' && thinkingStatus && (
+                    <span className="absolute bottom-1 left-0 right-0 text-center text-[7px] sm:text-[8px] text-[#2d482e]/70 truncate px-3">
+                      {thinkingStatus}
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
                   {toastMessage && (
                     <div className="absolute top-2 left-2 right-2 z-30 bg-[#2d482e] text-[#b5d6a7] border-2 border-[#b5d6a7] px-3 py-2 rounded-lg text-[9px] font-bold shadow-xl flex items-center justify-between animate-in slide-in-from-top duration-300">
                       <span className="truncate">{toastMessage.text}</span>
@@ -819,7 +985,12 @@ export default function App() {
                       <ErrorBoundary>
                         <ChatFeed messages={activeMessages} currentUser={currentUser} activeChatId={activeChatId} useCrtFilter={useCrtFilter} tts={tts} speakingMsgId={speakingMsgId} setSpeakingMsgId={setSpeakingMsgId} getApiUrl={getApiUrl} getApiToken={getApiToken} />
                       </ErrorBoundary>
-                      {isLoading && (
+                      {isLoading && streamingText && (
+                        <div className="self-start p-2 sm:p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white mx-3 mb-2 text-[10px] bmo-font whitespace-pre-wrap">
+                          {streamingText}<span className="bmo-caret">▊</span>
+                        </div>
+                      )}
+                      {isLoading && !streamingText && (
                         <div className="self-start p-3 rounded-xl border-2 border-[#2d482e] shadow-[3px_3px_0_#2d482e] bg-[#9fc28e] text-[#2d482e] font-bold animate-pulse mx-3 mb-2 flex items-center gap-2 text-[10px] bmo-font">
                           <Loader2 size={14} className="animate-spin text-[#007aff] shrink-0" />
                           <span>{thinkingStatus || "BMO IS COMPUTING... 🎮💭"}</span>

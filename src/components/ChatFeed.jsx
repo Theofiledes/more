@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, CheckCircle, XCircle, Loader2, Play, Square, FileText, Image as ImageIcon, StopCircle } from 'lucide-react';
+import { Settings, CheckCircle, XCircle, Loader2, Play, FileText, Image as ImageIcon, StopCircle } from 'lucide-react';
 
 const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken }) => {
   const [expandedToolId, setExpandedToolId] = useState(null);
@@ -177,36 +177,20 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
                 {msg.sender === 'user' ? currentUser.toUpperCase() : 'BMO'}
               </span>
 
-              {/* TTS Controls */}
+              {/* TTS Controls. No PAUSE/RESUME here on purpose: useNativeTTS (App.jsx)
+                  only exposes {isSpeaking, speak, stop} — @capacitor-community/text-to-speech
+                  has no pause API, and faking it with speechSynthesis.pause() would only work
+                  on web, diverging from the native build. A dead button is worse than none. */}
               {msg.sender === 'bmo' && !toolData && (
                 <div className="flex gap-2 mt-1">
                   {speakingMsgId === msg.id ? (
-                    <>
-                      {tts.isPaused ? (
-                        <button
-                          type="button"
-                          onClick={tts.resume}
-                          className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#007aff] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
-                        >
-                          <Play size={8} fill="currentColor" /> PLAY
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={tts.pause}
-                          className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ffcc00] text-[#2d482e] border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
-                        >
-                          <Square size={8} fill="currentColor" /> PAUSE
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => { tts.stop(); setSpeakingMsgId(null); }}
-                        className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
-                      >
-                        <StopCircle size={8} /> STOP
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      onClick={() => { tts.stop(); setSpeakingMsgId(null); }}
+                      className="flex items-center gap-1 px-2 py-1 text-[8px] bg-[#ff3b30] text-white border border-[#2d482e] rounded shadow-[1px_1px_0_#2d482e]"
+                    >
+                      <StopCircle size={8} /> STOP
+                    </button>
                   ) : (
                     <button
                       type="button"

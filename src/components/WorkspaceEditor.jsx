@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, FileCode, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
+import { getApiUrl, getApiToken } from '../utils/api';
 
 const WorkspaceEditor = () => {
   const [activeFile, setActiveFile] = useState('SOUL.md');
@@ -10,26 +11,13 @@ const WorkspaceEditor = () => {
 
   const files = ['SOUL.md', 'AGENTS.md', 'MEMORY.md'];
 
-  const getApiUrl = () => {
-    const envUrl = import.meta.env.VITE_BMO_API_URL;
-    const isCapacitor = typeof window !== 'undefined' && !!window.Capacitor;
-    const isDesktopLocal = typeof window !== 'undefined' && !window.Capacitor && 
-                           (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-
-    if (isDesktopLocal) {
-      return "http://localhost:18789";
-    }
-
-    return envUrl ? envUrl.replace(/\/$/, "") : "http://100.84.254.37:18789";
-  };
-
   const fetchFile = async (filename) => {
     setIsLoading(true);
     setSaveStatus(null);
     try {
       const apiUrl = getApiUrl();
-      const apiToken = import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
-      
+      const apiToken = getApiToken();
+
       const response = await fetch(`${apiUrl}/v1/workspace/${filename}`, {
         headers: { "Authorization": `Bearer ${apiToken}` }
       });
@@ -53,8 +41,8 @@ const WorkspaceEditor = () => {
     setSaveStatus(null);
     try {
       const apiUrl = getApiUrl();
-      const apiToken = import.meta.env.VITE_BMO_API_KEY || "bmo-secret-key-2026";
-      
+      const apiToken = getApiToken();
+
       const response = await fetch(`${apiUrl}/v1/workspace/${activeFile}`, {
         method: 'PUT',
         headers: { 
