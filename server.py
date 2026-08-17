@@ -1,9 +1,11 @@
 import os
+import re
 import json
 import requests
 import asyncio
 import signal
 import sys
+from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException, Depends, status, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,12 @@ from pydantic import BaseModel
 from git import Repo
 import base64
 import time
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 try:
     import psutil
@@ -27,8 +35,9 @@ auth_scheme = HTTPBearer()
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 CLOUD_API_URL = os.getenv("CLOUD_API_URL", "https://generativelanguage.googleapis.com")
-API_TOKEN = os.getenv("API_TOKEN", "bmo-secret-key-2026")
+API_TOKEN = os.getenv("API_TOKEN") or os.getenv("VITE_BMO_API_KEY", "bmo-secret-key-2026")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "ornith:9b")
+AUTO_CHECKPOINT = os.getenv("AUTO_CHECKPOINT", "true").lower() not in ("false", "0", "no")
 WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(WORKSPACE_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -73,6 +82,8 @@ class AgentExecutor:
             pass
 
     async def checkpoint(self):
+        if not AUTO_CHECKPOINT:
+            return False
         if self.repo:
             try:
                 self.repo.git.add(A=True)

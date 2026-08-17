@@ -334,6 +334,7 @@ export default function App() {
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
   const [face, setFace] = useState('^_^');
+  const [pinInput, setPinInput] = useState('');
   const [systemHealth, setSystemHealth] = useState({ backend: 'OFFLINE', ollama: 'OFFLINE' });
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
