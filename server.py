@@ -65,6 +65,37 @@ os.makedirs(LOGS_DIR, exist_ok=True)
 SCRATCH_DIR = os.path.join(WORKSPACE_DIR, "scratch")
 os.makedirs(SCRATCH_DIR, exist_ok=True)
 
+# scratch/ is BMO's own upload cache — full-resolution phone photos with no cap or
+# cleanup is literally how it reached 44MB in the original private repo. Default 200MB,
+# override with SCRATCH_MAX_MB. Enforced by evicting the OLDEST files first (by mtime),
+# same policy as a simple LRU cache.
+SCRATCH_MAX_BYTES = int(os.getenv("SCRATCH_MAX_MB", "200")) * 1024 * 1024
+
+def enforce_scratch_cap():
+    """Evicts the oldest files in SCRATCH_DIR until it's back under SCRATCH_MAX_BYTES."""
+    try:
+        entries = []
+        total = 0
+        for f in os.listdir(SCRATCH_DIR):
+            fp = os.path.join(SCRATCH_DIR, f)
+            if os.path.isfile(fp):
+                st = os.stat(fp)
+                entries.append((st.st_mtime, st.st_size, fp))
+                total += st.st_size
+        if total <= SCRATCH_MAX_BYTES:
+            return
+        entries.sort(key=lambda e: e[0])
+        for _mtime, size, fp in entries:
+            if total <= SCRATCH_MAX_BYTES:
+                break
+            try:
+                os.remove(fp)
+                total -= size
+            except OSError:
+                pass
+    except Exception as e:
+        print("Error enforcing scratch/ cap:", e)
+
 def save_payload_media_to_scratch(messages):
     """Scan incoming user messages for base64 image_url or attached files and cache to scratch/."""
     for m in messages:
@@ -83,6 +114,7 @@ def save_payload_media_to_scratch(messages):
                                 with open(filepath, "wb") as f:
                                     f.write(base64.b64decode(encoded))
                                 print(f"📸 Image cached to scratch: {filepath}")
+                                enforce_scratch_cap()
                             except Exception as e:
                                 print("Error caching image to scratch:", e)
 
@@ -335,6 +367,7 @@ async def dream_synthesis_cron():
 
 @app.on_event("startup")
 async def startup():
+    enforce_scratch_cap()  # in case scratch/ was already over the cap before this existed
     asyncio.create_task(watchdog())
     asyncio.create_task(heartbeat())
     asyncio.create_task(pre_warm_brain())
