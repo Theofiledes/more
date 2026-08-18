@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Terminal, ChevronDown, Trash2, Cpu, Activity, Database } from 'lucide-react';
 import { getApiUrl, getApiToken } from '../utils/api';
+import { connectBmoSocket, subscribeBmoSocket, subscribeBmoSocketStatus, isBmoSocketOpen } from '../utils/bmoSocket';
 
 const TelemetryTerminal = () => {
   const [lines, setLines] = useState([]);
@@ -30,9 +31,12 @@ const TelemetryTerminal = () => {
     }).filter(p => p !== null);
   };
 
+  // Live telemetry/metrics arrive over the shared /v1/ws socket (see utils/bmoSocket.js).
+  // If the socket hasn't connected within a few seconds — e.g. a proxy blocks WS — this
+  // falls back to the old HTTP polling so the terminal still works somewhere.
   useEffect(() => {
-    let pollInterval;
-    let metricsInterval;
+    let fallbackLines = null;
+    let fallbackMetrics = null;
     const apiUrl = getApiUrl();
     const apiToken = getApiToken();
 
@@ -42,11 +46,10 @@ const TelemetryTerminal = () => {
           headers: { 'Authorization': `Bearer ${apiToken}` }
         });
         const data = await response.json();
-        if (data.lines) {
-          setLines(data.lines);
-          setIsConnected(true);
-        }
-      } catch (err) { setIsConnected(false); }
+        if (data.lines) setLines(data.lines);
+      } catch {
+        // Next poll retries.
+      }
     };
 
     const fetchMetrics = async () => {
@@ -54,19 +57,58 @@ const TelemetryTerminal = () => {
         const response = await fetch(`${apiUrl}/v1/system/metrics`, {
           headers: { 'Authorization': `Bearer ${apiToken}` }
         });
-        const data = await response.json();
-        setMetrics(data);
-      } catch (err) { }
+        setMetrics(await response.json());
+      } catch {
+        // Next poll retries.
+      }
     };
 
-    fetchTelemetry();
-    fetchMetrics();
-    pollInterval = setInterval(fetchTelemetry, 1500);
-    metricsInterval = setInterval(fetchMetrics, 2500);
-    
+    const startFallbackPolling = () => {
+      if (fallbackLines) return;
+      fetchTelemetry();
+      fetchMetrics();
+      fallbackLines = setInterval(fetchTelemetry, 1500);
+      fallbackMetrics = setInterval(fetchMetrics, 2500);
+    };
+    const stopFallbackPolling = () => {
+      clearInterval(fallbackLines);
+      clearInterval(fallbackMetrics);
+      fallbackLines = null;
+      fallbackMetrics = null;
+    };
+
+    connectBmoSocket();
+
+    const unsubMessages = subscribeBmoSocket((msg) => {
+      if (msg.type === 'snapshot') {
+        setLines(msg.lines || []);
+        setMetrics(msg.metrics || {});
+      } else if (msg.type === 'metrics') {
+        const { type, ...rest } = msg;
+        setMetrics(rest);
+      } else if (msg.type === 'log') {
+        setLines(prev => {
+          const next = [...prev, msg.line];
+          return next.length > 500 ? next.slice(-500) : next;
+        });
+      }
+      // {tool:'sentinel', ...} approval events are handled by App.jsx's own subscription.
+    });
+
+    const unsubStatus = subscribeBmoSocketStatus((status) => {
+      setIsConnected(status === 'connected');
+      if (status === 'connected') stopFallbackPolling();
+    });
+
+    const fallbackTimer = setTimeout(() => {
+      if (!isBmoSocketOpen()) startFallbackPolling();
+    }, 8000);
+
     return () => {
-      clearInterval(pollInterval);
-      clearInterval(metricsInterval);
+      unsubMessages();
+      unsubStatus();
+      stopFallbackPolling();
+      clearTimeout(fallbackTimer);
     };
   }, []);
 

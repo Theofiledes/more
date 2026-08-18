@@ -6,3 +6,4 @@ pydantic>=2.13
 psutil>=7.2
 python-dotenv>=1.2
 httpx>=0.28
+websockets>=17.0

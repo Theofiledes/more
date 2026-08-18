@@ -181,6 +181,7 @@ class AgentExecutor:
         finally:
             self.pending_command = None
             self.approval_future = None
+            await broadcast_fn(json.dumps({"tool": "sentinel", "status": "cleared"}))
 
         if not approved:
             return f"Command rejected: '{cmd}' was not approved by the user."
@@ -338,6 +339,7 @@ async def startup():
     asyncio.create_task(heartbeat())
     asyncio.create_task(pre_warm_brain())
     asyncio.create_task(dream_synthesis_cron())
+    asyncio.create_task(metrics_broadcaster())
 
 async def pre_warm_brain():
     await asyncio.sleep(3)
@@ -1170,6 +1172,63 @@ async def reject_cmd(token: str = Depends(get_token)):
         executor.approval_future.set_result(False)
     await broadcast_to_managers("\u001b[31m[SENTINEL] Command rejected by user.\u001b[0m")
     return {"status": "rejected"}
+
+@app.websocket("/v1/ws")
+async def ws_telemetry(websocket: WebSocket, token: str = ""):
+    # Browsers can't set custom headers on a WebSocket handshake, so auth rides in the
+    # query string instead of the Authorization header get_token() checks elsewhere.
+    if not API_TOKEN or token != API_TOKEN:
+        await websocket.close(code=4401)
+        return
+
+    await manager.connect(websocket)
+    try:
+        cpu_val = psutil.cpu_percent() if psutil else 0.0
+        ram_val = psutil.virtual_memory().percent if psutil else 0.0
+        disk_val = psutil.disk_usage('/').percent if psutil else 0.0
+        await websocket.send_text(json.dumps({
+            "type": "snapshot",
+            "lines": telemetry_buffer[-100:],
+            "metrics": {
+                "cpu": cpu_val, "ram": ram_val, "disk": disk_val,
+                "task": executor.current_task,
+                "context_tokens": last_context_metrics["context_tokens"],
+                "context_limit": last_context_metrics["context_limit"],
+                "context_percent": last_context_metrics["context_percent"],
+                "active_messages": last_context_metrics["active_messages"],
+            },
+            "pending_command": executor.pending_command,
+            **runtime_state,
+        }))
+        # Nothing meaningful ever arrives from the client -- this just blocks until the
+        # socket closes, so disconnects raise WebSocketDisconnect and hit the finally below.
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(websocket)
+
+async def metrics_broadcaster():
+    """Pushes live system metrics to any connected /v1/ws clients every 2s. Skips all
+    work (including the psutil calls) when nobody's connected, unlike the polling it
+    replaces which always ran on a timer regardless of whether anyone was watching."""
+    while True:
+        await asyncio.sleep(2)
+        if not manager.active_connections:
+            continue
+        cpu_val = psutil.cpu_percent() if psutil else 0.0
+        ram_val = psutil.virtual_memory().percent if psutil else 0.0
+        disk_val = psutil.disk_usage('/').percent if psutil else 0.0
+        await manager.broadcast(json.dumps({
+            "type": "metrics",
+            "cpu": cpu_val, "ram": ram_val, "disk": disk_val,
+            "task": executor.current_task,
+            "context_tokens": last_context_metrics["context_tokens"],
+            "context_limit": last_context_metrics["context_limit"],
+            "context_percent": last_context_metrics["context_percent"],
+            "active_messages": last_context_metrics["active_messages"],
+        }))
 
 # MOUNT UI (Must be last)
 if os.path.exists("dist"):

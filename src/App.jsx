@@ -13,6 +13,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 import { playClick, playChime, playCheer, playGlitch, playBeep, playCartridge } from './utils/soundEffects';
 import { getApiUrl, getApiToken } from './utils/api';
+import { connectBmoSocket, disconnectBmoSocket, subscribeBmoSocket } from './utils/bmoSocket';
 
 const MICRO_AGENTS_LIST = [
   { tag: '@aider_architect', name: 'Aider Refactor', desc: 'Multi-file code editing via Aider CLI' },
@@ -244,54 +245,44 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
     { role: 'user', content: rc }
   ];
 
-  let statusPoll = null;
+  // Thinking-status text and Guardian Protocol approval prompts arrive as pushes over the
+  // shared /v1/ws socket (see utils/bmoSocket.js) instead of a 600ms poll loop.
   let lastSeenLine = '';
   let lastSentinelDiff = null;
-  if (onStatusUpdate) {
-    statusPoll = setInterval(async () => {
-      try {
-        const tRes = await fetch(`${apiUrl}/v1/telemetry`, { headers: { "Authorization": `Bearer ${apiToken}` } });
-        if (tRes.ok) {
-          const tData = await tRes.json();
-          if (tData.lines && tData.lines.length > 0) {
-            // Find the last meaningful line that changed
-            const meaningful = tData.lines.slice().reverse().find(l => {
-              const c = l.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
-              return c && (
-                c.includes('BRAIN') || c.includes('EXECUTING') ||
-                c.includes('MICRO-AGENT') || c.includes('STATE CHANGE') ||
-                c.includes('RESPONSE READY') || c.includes('TOOL') ||
-                c.includes('DREAM')
-              );
-            });
-            if (meaningful) {
-              const cleanLine = meaningful.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
-              if (cleanLine !== lastSeenLine) {
-                lastSeenLine = cleanLine;
-                onStatusUpdate(`⚡ ${cleanLine}`);
-              }
-            }
-          }
-        }
-      } catch (e) { }
-      // Guardian Protocol: surface a pending run_command approval, if any.
-      // Uses live executor state (not the broadcast log) so an old, already
-      // resolved pending command can never be re-surfaced as if it were new.
-      if (onPendingApproval) {
-        try {
-          const sRes = await fetch(`${apiUrl}/v1/telemetry/state`, { headers: { "Authorization": `Bearer ${apiToken}` } });
-          if (sRes.ok) {
-            const sData = await sRes.json();
-            const pending = sData.pending_command || null;
-            if (pending !== lastSentinelDiff) {
-              lastSentinelDiff = pending;
-              if (pending) onPendingApproval(pending);
-            }
-          }
-        } catch (e) { }
+  const isMeaningfulLine = (raw) => {
+    const c = raw.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
+    return c && (
+      c.includes('BRAIN') || c.includes('EXECUTING') ||
+      c.includes('MICRO-AGENT') || c.includes('STATE CHANGE') ||
+      c.includes('RESPONSE READY') || c.includes('TOOL') ||
+      c.includes('DREAM')
+    ) ? c : null;
+  };
+  connectBmoSocket();
+  const unsubscribe = subscribeBmoSocket((msg) => {
+    if (onStatusUpdate && msg.type === 'log') {
+      const cleanLine = isMeaningfulLine(msg.line);
+      if (cleanLine && cleanLine !== lastSeenLine) {
+        lastSeenLine = cleanLine;
+        onStatusUpdate(`\u26a1 ${cleanLine}`);
       }
-    }, 600);
-  }
+    } else if (onStatusUpdate && msg.type === 'snapshot' && msg.lines?.length) {
+      const meaningful = msg.lines.slice().reverse().map(isMeaningfulLine).find(Boolean);
+      if (meaningful && meaningful !== lastSeenLine) {
+        lastSeenLine = meaningful;
+        onStatusUpdate(`\u26a1 ${meaningful}`);
+      }
+    }
+    // Guardian Protocol: surface a pending run_command approval, if any. Driven by the
+    // same event server.py's run_command_gated already broadcasts the moment it sets
+    // executor.pending_command, so this can never re-surface an already-resolved command.
+    if (onPendingApproval && msg.tool === 'sentinel' && msg.status === 'pending') {
+      if (msg.diff !== lastSentinelDiff) {
+        lastSentinelDiff = msg.diff;
+        onPendingApproval(msg.diff);
+      }
+    }
+  });
 
   try {
     const res = await fetch(`${apiUrl}/v1/chat/completions`, {
@@ -306,7 +297,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
   } catch (error) {
     console.error("Local BMO request failed:", error);
   } finally {
-    if (statusPoll) clearInterval(statusPoll);
+    unsubscribe();
   }
 
   return null;
@@ -337,19 +328,16 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
 
   let finalText = null, finalEmotion = null;
   let lastSentinelDiff = null;
-  const pollForApproval = onPendingApproval ? setInterval(async () => {
-    try {
-      const sRes = await fetch(`${apiUrl}/v1/telemetry/state`, { headers: { "Authorization": `Bearer ${apiToken}` } });
-      if (sRes.ok) {
-        const sData = await sRes.json();
-        const pending = sData.pending_command || null;
-        if (pending !== lastSentinelDiff) {
-          lastSentinelDiff = pending;
-          if (pending) onPendingApproval(pending);
-        }
-      }
-    } catch (e) { }
-  }, 600) : null;
+  // Guardian Protocol approval prompts arrive as a push over the shared /v1/ws socket
+  // (see utils/bmoSocket.js) instead of a 600ms poll — thinking-status text doesn't need
+  // this path here since it already streams inline as SSE 'status' events below.
+  connectBmoSocket();
+  const unsubscribeApproval = onPendingApproval ? subscribeBmoSocket((msg) => {
+    if (msg.tool === 'sentinel' && msg.status === 'pending' && msg.diff !== lastSentinelDiff) {
+      lastSentinelDiff = msg.diff;
+      onPendingApproval(msg.diff);
+    }
+  }) : null;
 
   try {
     const res = await fetch(`${apiUrl}/v1/chat/stream`, {
@@ -389,7 +377,7 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
   } catch (error) {
     console.error("Streaming BMO request failed:", error);
   } finally {
-    if (pollForApproval) clearInterval(pollForApproval);
+    unsubscribeApproval?.();
   }
 
   return { text: finalText, emotion: finalEmotion };
@@ -401,6 +389,13 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
   const [isServerSleeping, setIsServerSleeping] = useState(false);
   useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
+
+  // Single shared telemetry/approval socket (see utils/bmoSocket.js), live only while
+  // logged in — nothing meaningful to push before that anyway.
+  useEffect(() => {
+    if (isAuthenticated) connectBmoSocket();
+    else disconnectBmoSocket();
+  }, [isAuthenticated]);
 
   // Short viewports (a real Android soft keyboard, a floating/split browser window,
   // a short laptop screen) must never let the face zone starve the chat feed. Below
