@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Sparkles, Sliders, Cpu, HardDrive, Volume2, ShieldCheck, Mic, Camera, Send, RefreshCw, Undo2, FolderUp } from 'lucide-react';
-import { playClick, playChime, playCheer, playBeep, playCartridge } from '../utils/soundEffects';
+import { playClick, playCheer, playBeep } from '../utils/soundEffects';
 
 const STEPS = [
   {

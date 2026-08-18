@@ -41,7 +41,7 @@ const useNativeTTS = () => {
       });
       setIsSpeaking(false);
       onEnd?.();
-    } catch (e) {
+    } catch {
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
@@ -53,7 +53,7 @@ const useNativeTTS = () => {
     }
   }, []);
   const stop = useCallback(async () => {
-    try { await TextToSpeech.stop(); if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { }
+    try { await TextToSpeech.stop(); if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* ignored */ }
     setIsSpeaking(false);
   }, []);
   return { isSpeaking, speak, stop };
@@ -116,7 +116,7 @@ const parseToolCall = (text) => {
   try {
     const p = JSON.parse(text);
     if (p && typeof p.tool === 'string') return { tool: p.tool, action: p.action || null };
-  } catch { }
+  } catch { /* not valid tool-call JSON */ }
   return null;
 };
 
@@ -250,6 +250,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
   let lastSeenLine = '';
   let lastSentinelDiff = null;
   const isMeaningfulLine = (raw) => {
+    // eslint-disable-next-line no-control-regex -- strips real ANSI escape codes from backend log text
     const c = raw.replace(/\u001b\[[0-9;]*m/g, '').replace(/^\[[0-9:]+\]/, '').trim();
     return c && (
       c.includes('BRAIN') || c.includes('EXECUTING') ||
@@ -371,7 +372,7 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
         buf = buf.slice(idx + 2);
         const line = frame.split('\n').find(l => l.startsWith('data:'));
         if (!line) continue;
-        try { handleEvent(JSON.parse(line.slice(5))); } catch (e) { }
+        try { handleEvent(JSON.parse(line.slice(5))); } catch { /* ignored */ }
       }
     }
   } catch (error) {
@@ -575,7 +576,7 @@ export default function App() {
           setServerStatus('RESTARTING');
         }
       }
-    } catch (e) {
+    } catch {
       consecutiveFailuresRef.current += 1;
       if (consecutiveFailuresRef.current >= 3) {
         setSystemHealth({ backend: 'OFFLINE', ollama: 'OFFLINE' });
@@ -602,7 +603,7 @@ export default function App() {
         }
         lastModelsRef.current = currentModels;
       }
-    } catch (e) { }
+    } catch { /* ignored */ }
   }, [showToast]);
 
   const runDiagnostic = useCallback(async () => {
@@ -621,7 +622,7 @@ export default function App() {
         const apiUrl = getApiUrl();
         const apiToken = getApiToken();
         await fetch(`${apiUrl}/v1/telemetry/state`, { method: 'POST', headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ safety_stride: safetyStride, is_dreaming: isDreaming }) });
-      } catch (e) { }
+      } catch { /* ignored */ }
     };
     syncState();
   }, [safetyStride, isDreaming]);
@@ -684,7 +685,7 @@ export default function App() {
         setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) setActiveChatId(1);
         playChime();
       }
-    } catch (e) {
+    } catch {
       setIsServerSleeping(true);
       if (history.length === 0) { setHistory([{ id: 1, user: user, title: 'OFFLINE_MODE' }]); setActiveChatId(1); }
       playGlitch();
@@ -712,7 +713,7 @@ export default function App() {
         headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ chats: newChats, messages: newMsgs })
       });
-    } catch (e) { }
+    } catch { /* ignored */ }
   };
 
   const handleNewChat = (uo = null) => {
@@ -750,6 +751,9 @@ export default function App() {
     playBeep();
     isSendingRef.current = true;
     const ci = inputText; const cim = pendingImageUrl; const cf = pendingFile;
+    // handleSend only runs from a user action (button/Enter), never during render;
+    // Date.now()+Math.random() here is a cheap unique message id, not a render-phase read.
+    // eslint-disable-next-line react-hooks/purity
     let nm = { id: Date.now() + Math.random(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
     if (cim) { 
       nm.type = 'image'; nm.imageUrl = cim; nm.text = ci; 
@@ -832,6 +836,7 @@ export default function App() {
     }
 
     setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
+    // eslint-disable-next-line react-hooks/purity -- same handleSend event-handler context as above
     const bmi = Date.now() + Math.random();
     const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText };
     setMessages(prev => [...prev, bmsg]);

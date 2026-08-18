@@ -7,7 +7,6 @@ const HardwareControls = ({
   onSend,
   onUploadFile,
   onOpenCamera,
-  onDeleteLast,
   onClearActiveChat,
   onStopTTS,
   onScrollUp,
@@ -20,7 +19,9 @@ const HardwareControls = ({
   const triggerHaptic = async () => {
     try {
       await Haptics.impact({ style: ImpactStyle.Light });
-    } catch (e) { }
+    } catch {
+      // Haptics unsupported on this platform (e.g. web) — safe to ignore.
+    }
   };
 
   const startRecording = async () => {
@@ -46,7 +47,9 @@ const HardwareControls = ({
   const stopRecording = () => {
     if (isRecording) {
       if (mediaRecorderRef.current) {
-        try { mediaRecorderRef.current.stop(); } catch (e) {}
+        try { mediaRecorderRef.current.stop(); } catch {
+          // Already stopped — safe to ignore.
+        }
       }
       setIsRecording(false);
       triggerHaptic();

@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useState } from 'react';
 
 // BMO's face, drawn as inline SVG — no image assets, nothing traced from the show.
 // Two eyes + a mouth on a 200x120 canvas; every emotion is just a different shape
@@ -84,7 +84,9 @@ function MouthShape({ shape, ink }) {
  * - talking: true while TTS is speaking OR tokens are streaming in — flaps the mouth.
  */
 export default function BmoFace({ emotion = 'happy', state = 'idle', talking = false, onPoke, ink = INK, className = '' }) {
-  const blinkDelay = useRef(`-${(Math.random() * 5).toFixed(2)}s`);
+  // Lazy useState initializer: React guarantees this runs exactly once (on mount),
+  // so the "impure" Math.random() here never re-executes across re-renders.
+  const [blinkDelay] = useState(() => `-${(Math.random() * 5).toFixed(2)}s`);
 
   const overrideKey = state === 'offline' || state === 'loading' || state === 'eating' ? state : emotion;
   const face = FACES[overrideKey] || FACES.happy;
@@ -115,7 +117,7 @@ export default function BmoFace({ emotion = 'happy', state = 'idle', talking = f
         </>
       )}
 
-      <g className="bmo-eyes" style={{ transformOrigin: `${(EYE_L + EYE_R) / 2}px ${EYE_Y}px`, animationDelay: blinkDelay.current }}>
+      <g className="bmo-eyes" style={{ transformOrigin: `${(EYE_L + EYE_R) / 2}px ${EYE_Y}px`, animationDelay: blinkDelay }}>
         <g transform={`translate(${EYE_L}, ${EYE_Y})`}><EyeShape shape={face.eyes[0]} ink={ink} /></g>
         <g transform={`translate(${EYE_R}, ${EYE_Y})`}><EyeShape shape={face.eyes[1]} ink={ink} /></g>
         {face.glasses && (

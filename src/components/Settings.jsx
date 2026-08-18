@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, ChevronDown, RefreshCw, Bug, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play, Keyboard, Sparkles } from 'lucide-react';
 import * as Sentry from "@sentry/capacitor";
-import { playClick, playChime, playBeep, playGlitch } from '../utils/soundEffects';
+import { playClick, playChime, playGlitch } from '../utils/soundEffects';
 
 const APP_VERSION = "v7.1.0-DYNAMIC";
 
@@ -48,7 +48,7 @@ const Settings = ({
             }
           }
         }
-      } catch (e) {
+      } catch {
         setDynamicModels([]);
       }
     };
@@ -80,7 +80,7 @@ const Settings = ({
       } else {
         alert("REPAIR SIGNAL SENT.");
       }
-    } catch (e) {
+    } catch {
       alert("REPAIR FAILED: Link is down.");
     }
   };

@@ -13,6 +13,7 @@ const TelemetryTerminal = () => {
   // Minimal ANSI parser for colors
   const parseAnsi = (text) => {
     if (typeof text !== 'string') return text;
+    // eslint-disable-next-line no-control-regex -- matches real ANSI escape sequences from the backend log stream
     const parts = text.split(/(\u001b\[[0-9;]*m)/);
     let currentColor = 'text-gray-300';
     
@@ -84,7 +85,7 @@ const TelemetryTerminal = () => {
         setLines(msg.lines || []);
         setMetrics(msg.metrics || {});
       } else if (msg.type === 'metrics') {
-        const { type, ...rest } = msg;
+        const { type: _type, ...rest } = msg;
         setMetrics(rest);
       } else if (msg.type === 'log') {
         setLines(prev => {

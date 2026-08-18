@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Settings, CheckCircle, XCircle, Loader2, Play, FileText, Image as ImageIcon, StopCircle } from 'lucide-react';
+import { Play, FileText, Image as ImageIcon, StopCircle } from 'lucide-react';
 
-const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken }) => {
+const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken }) => {
   const [expandedToolId, setExpandedToolId] = useState(null);
 
   const handleApproval = async (approved) => {
@@ -79,16 +79,6 @@ const ChatFeed = ({ messages, currentUser, activeChatId, useCrtFilter, tts, spea
       case 'error':
       case 'failed': return 'bg-red-500';
       default: return 'bg-gray-500';
-    }
-  };
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'executing': return <Loader2 size={12} className="animate-spin" />;
-      case 'success': return <CheckCircle size={12} />;
-      case 'error':
-      case 'failed': return <XCircle size={12} />;
-      default: return <Settings size={12} />;
     }
   };
 
