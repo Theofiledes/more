@@ -120,6 +120,29 @@ const parseToolCall = (text) => {
   return null;
 };
 
+// Full-resolution phone photos (several MB as base64) sent unresized used to blow past
+// localStorage's ~5-10MB per-origin quota once persisted into chat history, crashing the
+// whole app with an uncaught QuotaExceededError. Downscaling here also makes the Moondream
+// vision call faster and less likely to time out on a large image.
+const resizeImageDataUrl = (dataUrl, maxDim = 1280, quality = 0.85) => new Promise((resolve) => {
+  const img = new window.Image();
+  img.onload = () => {
+    let { width, height } = img;
+    if (width > maxDim || height > maxDim) {
+      if (width > height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+      else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+    resolve(canvas.toDataURL('image/jpeg', quality));
+  };
+  img.onerror = () => resolve(dataUrl); // decode failed — fall back to the original rather than lose the upload
+  img.src = dataUrl;
+});
+
 const fetchGemini = async (command, image = null, file = null, history = []) => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (!apiKey) return "Gemini API Key missing in .env!";
@@ -410,7 +433,16 @@ export default function App() {
     return () => (vv || window).removeEventListener('resize', check);
   }, []);
   const [messages, setMessages] = useState(() => { const s = localStorage.getItem('bmo_messages'); return s ? JSON.parse(s) : []; });
-  useEffect(() => { localStorage.setItem('bmo_messages', JSON.stringify(messages)); }, [messages]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('bmo_messages', JSON.stringify(messages));
+    } catch (err) {
+      // Quota exceeded (e.g. an oversized image slipped through) — drop the persist
+      // rather than let it crash the whole app; the in-memory messages state is
+      // unaffected either way.
+      console.warn('Failed to persist chat history to localStorage:', err);
+    }
+  }, [messages]);
   const [inputText, setInputText] = useState(() => localStorage.getItem('bmo_input_buffer') || '');
   useEffect(() => { localStorage.setItem('bmo_input_buffer', inputText); }, [inputText]);
   const [history, setHistory] = useState([]);
@@ -874,7 +906,10 @@ export default function App() {
       playCartridge();
       if (f.type.startsWith('image/')) {
         setIsEncoding(true); const r = new FileReader();
-        r.onloadend = () => { setPendingImageUrl(r.result); setPendingFile(null); setIsEncoding(false); setIsEating(true); };
+        r.onloadend = async () => {
+          const resized = await resizeImageDataUrl(r.result);
+          setPendingImageUrl(resized); setPendingFile(null); setIsEncoding(false); setIsEating(true);
+        };
         r.onerror = () => setIsEncoding(false); r.readAsDataURL(f);
       } else {
         setIsEncoding(true); const r = new FileReader();
