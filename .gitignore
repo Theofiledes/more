@@ -43,3 +43,6 @@ public/voices/*.onnx.json
 
 # Local agent/tool scratch — not part of the project
 .gemini/
+
+# BMO writes what it learns about you here — seeded from MEMORY.example.md
+MEMORY.md

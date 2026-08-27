@@ -448,7 +448,7 @@ async def consolidate_memory(force: bool = False):
     """Merge accumulated facts into fewer, denser ones.
 
     Raising the injected-fact count fixes recall but not quality: append-only learning
-    produces near-duplicates ("Anthony checked Pittsburgh weather" five times) that
+    produces near-duplicates (the same observation restated five times) that
     crowd out everything else. Consolidation is what turns accumulation into growth.
 
     Prefers the cloud — merging dozens of facts without losing information is a real
@@ -724,6 +724,7 @@ async def dream_synthesis_cron():
 @app.on_event("startup")
 async def startup():
     enforce_scratch_cap()  # in case scratch/ was already over the cap before this existed
+    ensure_memory_file()
     announce_bootstrap_pairing_code()
     asyncio.create_task(watchdog())
     asyncio.create_task(heartbeat())
@@ -953,6 +954,22 @@ async def dream_now(token: str = Depends(get_token)):
         return {"status": dream_state["last_status"], "summary": summary}
     except asyncio.CancelledError:
         return {"status": "aborted"}
+
+def ensure_memory_file():
+    """Seed MEMORY.md from the template on first run.
+
+    MEMORY.md is gitignored because BMO writes what it learns about *you* into it —
+    it was previously tracked, and dream synthesis quietly filled it with the user's
+    city and speech habits. The template ships instead, and the live file is created
+    here so the workspace editor doesn't 404 on a fresh clone."""
+    if os.path.exists("MEMORY.md"):
+        return
+    try:
+        if os.path.exists("MEMORY.example.md"):
+            shutil.copyfile("MEMORY.example.md", "MEMORY.md")
+            print("  Created MEMORY.md from MEMORY.example.md", flush=True)
+    except OSError as e:
+        print(f"  Could not create MEMORY.md: {e}", flush=True)
 
 def announce_bootstrap_pairing_code():
     """With no devices enrolled yet, mint a first pairing code and print it here.
