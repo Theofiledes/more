@@ -424,6 +424,99 @@ async def triage_is_notable(text_sample: str):
     # Fail open: a broken filter should not silently stop BMO from ever learning.
     return True, "triage unavailable"
 
+MEMORY_CONSOLIDATE_AT = int(os.getenv("BMO_MEMORY_CONSOLIDATE_AT", "40"))
+
+async def consolidate_memory(force: bool = False):
+    """Merge accumulated facts into fewer, denser ones.
+
+    Raising the injected-fact count fixes recall but not quality: append-only learning
+    produces near-duplicates ("Anthony checked Pittsburgh weather" five times) that
+    crowd out everything else. Consolidation is what turns accumulation into growth.
+
+    Prefers the cloud — merging dozens of facts without losing information is a real
+    reasoning task, and a 3B model tends to drop things or invent connections. Falls
+    back to local. Archives the old set either way, so a bad merge is reversible."""
+    facts = memory_manager.all_facts()
+    if not facts:
+        return {"status": "nothing_to_do", "before": 0}
+    if len(facts) < MEMORY_CONSOLIDATE_AT and not force:
+        return {"status": "below_threshold", "before": len(facts),
+                "threshold": MEMORY_CONSOLIDATE_AT}
+
+    numbered = "\n".join(f"{i+1}. {f['content']}" for i, f in enumerate(facts))
+    target = max(8, min(20, len(facts) // 4))
+    prompt = (
+        "You are consolidating an AI companion's long-term memory about its user.\n"
+        f"Below are {len(facts)} accumulated notes. Many are near-duplicates.\n\n"
+        f"Merge them into AT MOST {target} durable facts. Rules:\n"
+        "- Combine repeated observations into one richer fact.\n"
+        "- Keep concrete specifics: names, places, preferences, projects, decisions.\n"
+        "- Drop pure chatter and anything about the weather on a particular day.\n"
+        "- Do NOT invent anything that isn't in the notes.\n"
+        "- Each fact is one short line, no numbering, no bullets.\n"
+        "- Reply with ONLY the facts, one per line.\n\n"
+        f"{numbered[:6000]}"
+    )
+
+    merged_text, source = "", None
+    allowed, _ = escalation_allowed()
+    # force lets a manual request escalate even in "ask" mode — the user asked for it.
+    # It must NOT override "off", though: off means nothing leaves the device, and a
+    # convenience flag quietly breaking that promise would be the worst kind of bug.
+    may_escalate = allowed or (force and runtime_state["escalation_mode"] != "off")
+    if GEMINI_API_KEY and may_escalate:
+        try:
+            record_escalation("memory consolidation", len(prompt))
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                r = await client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+            if r.is_success:
+                parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                merged_text = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
+                source = "gemini"
+            else:
+                print(f"[CONSOLIDATE] Gemini HTTP {r.status_code}", flush=True)
+        except Exception as e:
+            print(f"[CONSOLIDATE] Gemini failed: {e}", flush=True)
+
+    if not merged_text:
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                r = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json={
+                    "model": get_available_model(),
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0, "max_tokens": 900,
+                })
+            if r.is_success:
+                merged_text = r.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                source = "local"
+        except Exception as e:
+            print(f"[CONSOLIDATE] local failed: {e}", flush=True)
+
+    merged = []
+    for line in merged_text.splitlines():
+        line = re.sub(r'^\s*(?:[-*\u2022]|\d+[.)])\s*', '', line).strip()
+        if len(line) > 8:
+            merged.append(line[:300])
+    merged = merged[:target]
+
+    # Guardrails: a merge that collapses everything into a couple of lines, or that
+    # somehow produced more than we started with, is a failure — not an improvement.
+    if len(merged) < 3 or len(merged) >= len(facts):
+        return {"status": "rejected", "before": len(facts), "produced": len(merged),
+                "reason": "implausible merge, memory left untouched", "source": source}
+
+    batch = datetime.now().strftime("%Y%m%d-%H%M%S")
+    archived, inserted = memory_manager.replace_facts(merged, batch_label=batch)
+    memory_manager.save_workspace_file(
+        "MEMORY.md",
+        "\n\n## Consolidated " + batch + "\n" + "\n".join(f"- {m}" for m in merged),
+        append=True)
+    await broadcast_to_managers(
+        f"\u001b[32m[MEMORY] Consolidated {archived} facts into {inserted} ({source}).\u001b[0m")
+    return {"status": "ok", "before": archived, "after": inserted,
+            "source": source, "batch": batch, "facts": merged}
+
 async def perform_dream_synthesis():
     text_sample = ""
     if os.path.exists("history.json"):
@@ -529,6 +622,13 @@ async def perform_dream_synthesis():
                 "followup": runtime_state["proactive_mode"] == "full",
             })
             del proactive_queue[:-10]  # only the last few matter
+
+        # Learning is what grows the pile, so this is the natural moment to tidy it.
+        # No-ops below the threshold.
+        try:
+            await consolidate_memory()
+        except Exception as e:
+            print(f"[CONSOLIDATE] skipped: {e}", flush=True)
         await broadcast_to_managers(f"\u001b[32m[DREAM SYNTHESIS] New Memory Formed: '{summary}'\u001b[0m")
         return summary
 
@@ -770,6 +870,30 @@ async def set_autonomy(payload: AutonomySettings, token: str = Depends(get_token
     if payload.memory_facts is not None and 0 <= payload.memory_facts <= 200:
         runtime_state["memory_facts"] = payload.memory_facts
     return await get_autonomy(token)
+
+@app.get("/v1/memory")
+async def list_memory(token: str = Depends(get_token)):
+    facts = memory_manager.all_facts()
+    return {
+        "facts": facts,
+        "count": len(facts),
+        "injected": runtime_state["memory_facts"],
+        "consolidate_at": MEMORY_CONSOLIDATE_AT,
+    }
+
+@app.post("/v1/memory/consolidate")
+async def do_consolidate(force: bool = True, token: str = Depends(get_token)):
+    return await consolidate_memory(force=force)
+
+@app.post("/v1/memory/restore")
+async def restore_memory(token: str = Depends(get_token)):
+    """Undo the last consolidation. Consolidation archives rather than deletes
+    precisely so this is possible."""
+    n = memory_manager.restore_last_archive()
+    if not n:
+        raise HTTPException(status_code=404, detail="No archived memory to restore.")
+    await broadcast_to_managers(f"\u001b[33m[MEMORY] Restored {n} facts from archive.\u001b[0m")
+    return {"status": "ok", "restored": n}
 
 @app.get("/v1/proactive")
 async def get_proactive(token: str = Depends(get_token)):

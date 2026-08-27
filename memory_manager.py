@@ -17,8 +17,76 @@ class MemoryManager:
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Consolidation replaces facts with merged ones. It archives rather than deletes,
+        # so a bad merge is recoverable and nothing BMO learned is ever truly lost.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS facts_archive (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                timestamp DATETIME,
+                archived_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                batch TEXT
+            )
+        ''')
         conn.commit()
         conn.close()
+
+    def all_facts(self):
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute("SELECT id, content FROM facts ORDER BY id").fetchall()
+        conn.close()
+        return [{"id": r[0], "content": r[1]} for r in rows]
+
+    def replace_facts(self, new_facts, batch_label=""):
+        """Swap the fact set for a consolidated one, archiving what was there.
+
+        Returns (archived_count, inserted_count). Refuses to run on an empty
+        replacement — a model that returns nothing must not wipe BMO's memory."""
+        new_facts = [f.strip() for f in new_facts if f and f.strip()]
+        if not new_facts:
+            raise ValueError("refusing to replace facts with an empty set")
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        try:
+            cur.execute("BEGIN")
+            cur.execute(
+                "INSERT INTO facts_archive (content, timestamp, batch) "
+                "SELECT content, timestamp, ? FROM facts", (batch_label,))
+            archived = cur.rowcount
+            cur.execute("DELETE FROM facts")
+            cur.executemany("INSERT INTO facts (content) VALUES (?)",
+                            [(f,) for f in new_facts])
+            conn.commit()
+            return archived, len(new_facts)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def restore_last_archive(self):
+        """Undo the most recent consolidation."""
+        conn = sqlite3.connect(self.db_path)
+        cur = conn.cursor()
+        row = cur.execute("SELECT batch FROM facts_archive ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            conn.close()
+            return 0
+        batch = row[0]
+        try:
+            cur.execute("BEGIN")
+            cur.execute("DELETE FROM facts")
+            cur.execute("INSERT INTO facts (content, timestamp) "
+                        "SELECT content, timestamp FROM facts_archive WHERE batch = ?", (batch,))
+            n = cur.rowcount
+            cur.execute("DELETE FROM facts_archive WHERE batch = ?", (batch,))
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def add_fact(self, content):
         conn = sqlite3.connect(self.db_path)
