@@ -353,9 +353,25 @@ async def perform_dream_synthesis():
             }
             res = requests.post(url, json=g_payload, timeout=20)
             if res.ok:
-                summary = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                # Thinking-capable Gemini models return the reasoning as its own part with
+                # no "text", so parts[0] can legitimately be empty — join every part that
+                # actually carries text instead of assuming the answer is first.
+                parts = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                summary = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
+            else:
+                # A 429 (free-tier rate limit) or 403 is not an exception, so without this
+                # the failure was completely silent and the local fallback looked like a
+                # mystery slowdown.
+                detail = ""
+                try:
+                    detail = res.json().get("error", {}).get("message", "")[:200]
+                except Exception:
+                    detail = res.text[:200]
+                msg = f"Gemini dream synthesis HTTP {res.status_code}: {detail}"
+                print(msg, flush=True)
+                await broadcast_to_managers(f"[33m[DREAM SYNTHESIS] {msg} — falling back to local model.[0m")
         except Exception as e:
-            print("Gemini Dream Synthesis failed, falling back to local model:", e)
+            print("Gemini Dream Synthesis failed, falling back to local model:", e, flush=True)
 
     # 2. Fallback to Local Ollama Model if Gemini is unavailable
     if not summary:
