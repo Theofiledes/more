@@ -18,4 +18,20 @@ export const getApiUrl = () => {
   return 'http://localhost:18789';
 };
 
-export const getApiToken = () => import.meta.env.VITE_BMO_API_KEY || '';
+// A device token earned by pairing beats the build-time shared key. The shared key
+// stays as the fallback so an existing install keeps working before it's paired —
+// and so a server with BMO_SHARED_TOKEN=on still accepts it.
+export const DEVICE_TOKEN_KEY = 'bmo_device_token';
+
+export const getDeviceToken = () => {
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(DEVICE_TOKEN_KEY) || '';
+};
+
+export const setDeviceToken = (token) => {
+  if (typeof localStorage === 'undefined') return;
+  if (token) localStorage.setItem(DEVICE_TOKEN_KEY, token);
+  else localStorage.removeItem(DEVICE_TOKEN_KEY);
+};
+
+export const getApiToken = () => getDeviceToken() || import.meta.env.VITE_BMO_API_KEY || '';

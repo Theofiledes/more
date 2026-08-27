@@ -75,6 +75,12 @@ if API_TOKEN == _DEFAULT_API_TOKEN:
     print("  Set a real secret in API_TOKEN or VITE_BMO_API_KEY before")
     print("  exposing this server beyond localhost.")
     print("=" * 70 + "\n")
+
+# Once you've paired your devices, the shared token is the weakest link — it's one
+# secret that every client holds and that gets baked into any APK you build. Set
+# BMO_SHARED_TOKEN=off to require per-device pairing tokens instead. Kept ON by
+# default so an existing install doesn't lock itself out on upgrade.
+SHARED_TOKEN_ENABLED = os.getenv("BMO_SHARED_TOKEN", "on").lower() not in ("off", "false", "0", "no")
 # No hardcoded default — an unset OLLAMA_MODEL just means get_available_model()
 # auto-picks whatever chat-capable model is installed in Ollama (see below).
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "")
@@ -473,7 +479,7 @@ def get_token(auth: HTTPAuthorizationCredentials = Depends(auth_scheme)):
     health check and prints it in the launch banner, and it's the way back in if
     every device somehow gets revoked."""
     cred = auth.credentials
-    if API_TOKEN and cred == API_TOKEN:
+    if SHARED_TOKEN_ENABLED and API_TOKEN and cred == API_TOKEN:
         return cred
     if device_auth.verify_token(cred):
         return cred

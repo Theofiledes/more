@@ -4,6 +4,7 @@ import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
 import Settings, { APP_VERSION } from './components/Settings';
+import PairingScreen from './components/PairingScreen';
 import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import OnboardingModal from './components/OnboardingModal';
@@ -418,6 +419,8 @@ export default function App() {
   const [currentUser] = useState(() => Object.keys(USERS)[0]);
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
   const [isServerSleeping, setIsServerSleeping] = useState(false);
+  // True when the server rejects our token — this device needs to pair (or was revoked).
+  const [needsPairing, setNeedsPairing] = useState(false);
   useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
 
   // Single shared telemetry/approval socket (see utils/bmoSocket.js), live only while
@@ -587,6 +590,13 @@ export default function App() {
     const apiToken = getApiToken();
 
     try {
+      // /v1/health is unauthenticated, so it can't tell us whether our token is good.
+      // /v1/models is behind get_token, which makes it the cheap "are we still allowed
+      // in?" probe that surfaces an unpaired/revoked device.
+      fetch(`${apiUrl}/v1/models`, { headers: { "Authorization": `Bearer ${apiToken}` } })
+        .then(r => setNeedsPairing(r.status === 401))
+        .catch(() => { /* offline is handled by the health check below */ });
+
       const res = await fetch(`${apiUrl}/v1/health`, { headers: { "Authorization": `Bearer ${apiToken}` } });
       if (res.ok) {
         const health = await res.json();
@@ -1064,6 +1074,10 @@ export default function App() {
                       <p className="mb-2">OFFLINE...</p>
                       <button type="button" onClick={() => { playClick(); runDiagnostic(); }} className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] transition-all bmo-btn-tactile">RETRY LINK</button>
                     </div>
+                  ) : needsPairing ? (
+                    /* Ahead of the PIN gate on purpose: without a valid device token
+                       nothing behind the PIN would work anyway. */
+                    <PairingScreen onPaired={() => { setNeedsPairing(false); runDiagnostic(); }} />
                   ) : !isAuthenticated ? (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
                       <Lock size={48} className="mb-4 opacity-80" strokeWidth={2} /><h2 className="mb-6">SECURE CONNECTION:<br/>{currentUser.toUpperCase()}</h2>
