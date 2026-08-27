@@ -409,26 +409,244 @@ async def perform_dream_synthesis():
 
     return None
 
-async def dream_synthesis_cron():
-    """Nightly / periodic background job to condense chat history into MEMORY.md."""
-    while True:
-        await asyncio.sleep(1800) # Every 30 minutes
-        await perform_dream_synthesis()
+# --- IDLE-TRIGGERED DREAMING ---------------------------------------------------
+# Dreaming competes with the user for the GPU: on a 4GB card the chat model and a
+# synthesis pass do not coexist happily. So instead of a blind 30-minute timer, wait
+# for a lull, and abandon the dream the moment the user comes back — a half-finished
+# memory is worth less than a responsive BMO.
+DREAM_IDLE_SECONDS = int(os.getenv("DREAM_IDLE_SECONDS", "600"))      # lull before dreaming
+DREAM_MIN_GAP_SECONDS = int(os.getenv("DREAM_MIN_GAP_SECONDS", "1800"))  # floor between dreams
 
-def announce_bootstrap_pairing_code():
-    """With no devices enrolled yet, mint a first pairing code and print it here.
-    The console/log is the trust anchor: only someone with shell or log access to
-    this host can enroll device #1. Every device after that is invited in-app."""
-    if device_auth.device_count() > 0:
-        return
-    code = device_auth.create_pairing_code("first-run bootstrap")
-    print("\n" + "=" * 70)
-    print("  BMO DEVICE PAIRING — no devices enrolled yet.")
-    print(f"  Pairing code:  {code}")
-    print(f"  Valid for {PAIRING_CODE_TTL_SECONDS // 60} minutes, single use.")
-    print("  Enter it in the app to pair this device.")
-    print("  Restart the server to generate a new one.")
-    print("=" * 70 + "\n", flush=True)
+dream_state = {
+    "last_activity": time.time(),   # updated on every real chat request
+    "last_dream": 0.0,
+    "last_summary": None,
+    "last_status": "idle",          # idle | dreaming | aborted | done | failed
+    "running": False,
+    "aborted_count": 0,
+}
+_dream_task = None
+
+def note_user_activity():
+    """Called on chat requests. Cancels an in-flight dream so the user never waits
+    behind BMO's own thinking."""
+    dream_state["last_activity"] = time.time()
+    task = _dream_task
+    if task and not task.done():
+        task.cancel()
+        dream_state["aborted_count"] += 1
+        dream_state["last_status"] = "aborted"
+
+async def run_dream(trigger: str = "idle"):
+    """One dream pass, cancellable. Returns the summary or None."""
+    global _dream_task
+    dream_state["running"] = True
+    dream_state["last_status"] = "dreaming"
+    await broadcast_to_managers(f"[35m[DREAM] Starting ({trigger})...[0m")
+    try:
+        summary = await perform_dream_synthesis()
+        dream_state["last_dream"] = time.time()
+        dream_state["last_summary"] = summary
+        dream_state["last_status"] = "done" if summary else "failed"
+        return summary
+    except asyncio.CancelledError:
+        dream_state["last_status"] = "aborted"
+        await broadcast_to_managers("[33m[DREAM] Aborted — you're back, BMO yields the GPU.[0m")
+        raise
+    finally:
+        dream_state["running"] = False
+        _dream_task = None
+
+async def dream_synthesis_cron():
+    """Dream during lulls rather than on a fixed clock."""
+    global _dream_task
+    while True:
+        await asyncio.sleep(30)
+        if dream_state["running"]:
+            continue
+        now = time.time()
+        idle_for = now - dream_state["last_activity"]
+        since_last = now - dream_state["last_dream"]
+        if idle_for < DREAM_IDLE_SECONDS or since_last < DREAM_MIN_GAP_SECONDS:
+            continue
+        _dream_task = asyncio.create_task(run_dream("idle"))
+        try:
+            await _dream_task
+        except asyncio.CancelledError:
+            pass  # user came back; try again after the next lull
+        except Exception as e:
+            dream_state["last_status"] = "failed"
+            print(f"[DREAM] failed: {e}", flush=True)
+
+# --- WATCHDOG ---
+failure_count = 0
+async def watchdog():
+    global failure_count
+    while True:
+        await asyncio.sleep(30)
+        try:
+            res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+            if res.ok: failure_count = 0
+            else: failure_count += 1
+        except Exception: failure_count += 1
+
+        if failure_count >= 3:
+            await broadcast_to_managers("\u001b[31m[WATCHDOG] Local Ollama brain unresponsive. Retrying...\u001b[0m")
+            failure_count = 0
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
+# The "gemini-flash-latest" alias resolves to a model with its own (easily exhausted)
+# quota pool — it returned 429 while pinned versions on the same key returned 200.
+# Pin a real version and let it be overridden.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
+
+async def perform_dream_synthesis():
+    text_sample = ""
+    if os.path.exists("history.json"):
+        try:
+            with open("history.json", "r") as f:
+                hist = json.load(f)
+            msgs = hist.get("messages", [])
+            if msgs:
+                text_sample = "\n".join([f"{m.get('sender', 'user')}: {m.get('text', '')}" for m in msgs[-15:] if m.get('text')])
+        except Exception:
+            pass
+
+    # Fallback to scratch files & git activity if chat history is sparse
+    if not text_sample:
+        try:
+            proc = await asyncio.create_subprocess_shell("git log -n 5 --oneline", stdout=asyncio.subprocess.PIPE)
+            out, _ = await proc.communicate()
+            text_sample = f"Recent Git Commits:\n{out.decode().strip()}"
+        except Exception:
+            text_sample = "BMO app initialized with local vision, scratch storage, and full terminal control."
+
+    prompt = f"You are BMO's Dream Synthesizer. Summarize key user preferences, milestones, or important project facts from this context into 1 concise bullet point in BMO voice (max 25 words):\n\n{text_sample[:1500]}"
+
+    summary = ""
+    # 1. Try Gemini API if key is available
+    if GEMINI_API_KEY:
+        try:
+            await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Calling Gemini Cloud API for deep dream distillation...\u001b[0m")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            g_payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            res = requests.post(url, json=g_payload, timeout=20)
+            if res.ok:
+                # Thinking-capable Gemini models return the reasoning as its own part with
+                # no "text", so parts[0] can legitimately be empty — join every part that
+                # actually carries text instead of assuming the answer is first.
+                parts = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                summary = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
+            else:
+                # A 429 (free-tier rate limit) or 403 is not an exception, so without this
+                # the failure was completely silent and the local fallback looked like a
+                # mystery slowdown.
+                detail = ""
+                try:
+                    detail = res.json().get("error", {}).get("message", "")[:200]
+                except Exception:
+                    detail = res.text[:200]
+                msg = f"Gemini dream synthesis HTTP {res.status_code}: {detail}"
+                print(msg, flush=True)
+                await broadcast_to_managers(f"[33m[DREAM SYNTHESIS] {msg} — falling back to local model.[0m")
+        except Exception as e:
+            print("Gemini Dream Synthesis failed, falling back to local model:", e, flush=True)
+
+    # 2. Fallback to Local Ollama Model if Gemini is unavailable
+    if not summary:
+        try:
+            model = get_available_model()
+            await broadcast_to_managers(f"\u001b[35m[DREAM SYNTHESIS] Using local model '{model}' for memory distillation...\u001b[0m")
+            # 30s was too tight: a 9B model on CPU takes ~22s for this prompt on the dev
+            # machine, so the nightly cron logged a wall of "Read timed out" and silently
+            # never formed a memory. Slower hardware needs more headroom still.
+            res = requests.post(f"{OLLAMA_URL}/v1/chat/completions",
+                                json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 100},
+                                timeout=int(os.getenv("DREAM_TIMEOUT_SECONDS", "180")))
+            if res.ok:
+                summary = res.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        except Exception as e:
+            print("Local Dream Synthesis error:", e)
+
+    if summary:
+        fact = f"Dream Milestone: {summary}"
+        memory_manager.add_fact(fact)
+        memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
+        await broadcast_to_managers(f"\u001b[32m[DREAM SYNTHESIS] New Memory Formed: '{summary}'\u001b[0m")
+        return summary
+
+    return None
+
+# --- IDLE-TRIGGERED DREAMING ---------------------------------------------------
+# Dreaming competes with the user for the GPU: on a 4GB card the chat model and a
+# synthesis pass do not coexist happily. So instead of a blind 30-minute timer, wait
+# for a lull, and abandon the dream the moment the user comes back — a half-finished
+# memory is worth less than a responsive BMO.
+DREAM_IDLE_SECONDS = int(os.getenv("DREAM_IDLE_SECONDS", "600"))      # lull before dreaming
+DREAM_MIN_GAP_SECONDS = int(os.getenv("DREAM_MIN_GAP_SECONDS", "1800"))  # floor between dreams
+
+dream_state = {
+    "last_activity": time.time(),   # updated on every real chat request
+    "last_dream": 0.0,
+    "last_summary": None,
+    "last_status": "idle",          # idle | dreaming | aborted | done | failed
+    "running": False,
+    "aborted_count": 0,
+}
+_dream_task = None
+
+def note_user_activity():
+    """Called on chat requests. Cancels an in-flight dream so the user never waits
+    behind BMO's own thinking."""
+    dream_state["last_activity"] = time.time()
+    task = _dream_task
+    if task and not task.done():
+        task.cancel()
+        dream_state["aborted_count"] += 1
+        dream_state["last_status"] = "aborted"
+
+async def run_dream(trigger: str = "idle"):
+    """One dream pass, cancellable. Returns the summary or None."""
+    global _dream_task
+    dream_state["running"] = True
+    dream_state["last_status"] = "dreaming"
+    await broadcast_to_managers(f"[35m[DREAM] Starting ({trigger})...[0m")
+    try:
+        summary = await perform_dream_synthesis()
+        dream_state["last_dream"] = time.time()
+        dream_state["last_summary"] = summary
+        dream_state["last_status"] = "done" if summary else "failed"
+        return summary
+    except asyncio.CancelledError:
+        dream_state["last_status"] = "aborted"
+        await broadcast_to_managers("[33m[DREAM] Aborted — you're back, BMO yields the GPU.[0m")
+        raise
+    finally:
+        dream_state["running"] = False
+        _dream_task = None
+
+async def dream_synthesis_cron():
+    """Dream during lulls rather than on a fixed clock."""
+    global _dream_task
+    while True:
+        await asyncio.sleep(30)
+        if dream_state["running"]:
+            continue
+        now = time.time()
+        idle_for = now - dream_state["last_activity"]
+        since_last = now - dream_state["last_dream"]
+        if idle_for < DREAM_IDLE_SECONDS or since_last < DREAM_MIN_GAP_SECONDS:
+            continue
+        _dream_task = asyncio.create_task(run_dream("idle"))
+        try:
+            await _dream_task
+        except asyncio.CancelledError:
+            pass  # user came back; try again after the next lull
+        except Exception as e:
+            dream_state["last_status"] = "failed"
+            print(f"[DREAM] failed: {e}", flush=True)
 
 @app.on_event("startup")
 async def startup():
@@ -543,6 +761,55 @@ async def health():
         if res.ok: s["ollama"] = "OK"
     except Exception: pass
     return s
+
+@app.get("/v1/dream/status")
+async def dream_status(token: str = Depends(get_token)):
+    now = time.time()
+    idle_for = now - dream_state["last_activity"]
+    since_last = now - dream_state["last_dream"] if dream_state["last_dream"] else None
+    eligible_in = max(0, DREAM_IDLE_SECONDS - idle_for)
+    if since_last is not None:
+        eligible_in = max(eligible_in, DREAM_MIN_GAP_SECONDS - since_last)
+    return {
+        "status": dream_state["last_status"],
+        "running": dream_state["running"],
+        "idle_seconds": round(idle_for),
+        "seconds_since_last_dream": round(since_last) if since_last is not None else None,
+        "eligible_in_seconds": round(max(0, eligible_in)),
+        "last_summary": dream_state["last_summary"],
+        "aborted_count": dream_state["aborted_count"],
+        "idle_threshold_seconds": DREAM_IDLE_SECONDS,
+        "min_gap_seconds": DREAM_MIN_GAP_SECONDS,
+    }
+
+@app.post("/v1/dream/now")
+async def dream_now(token: str = Depends(get_token)):
+    """Manual trigger, for testing and for 'go learn something' on demand."""
+    global _dream_task
+    if dream_state["running"]:
+        return {"status": "already_running"}
+    _dream_task = asyncio.create_task(run_dream("manual"))
+    try:
+        summary = await _dream_task
+        return {"status": dream_state["last_status"], "summary": summary}
+    except asyncio.CancelledError:
+        return {"status": "aborted"}
+
+def announce_bootstrap_pairing_code():
+    """With no devices enrolled yet, mint a first pairing code and print it here.
+    The console/log is the trust anchor: only someone with shell or log access to
+    this host can enroll device #1. Every device after that is invited in-app."""
+    if device_auth.device_count() > 0:
+        return
+    code = device_auth.create_pairing_code("first-run bootstrap")
+    print("\n" + "=" * 70)
+    print("  BMO DEVICE PAIRING — no devices enrolled yet.")
+    print(f"  Pairing code:  {code}")
+    print(f"  Valid for {PAIRING_CODE_TTL_SECONDS // 60} minutes, single use.")
+    print("  Enter it in the app to pair this device.")
+    print("  Restart the server to generate a new one.")
+    print("=" * 70 + "\n", flush=True)
+
 
 @app.post("/v1/system/repair")
 async def repair(token: str = Depends(get_token)):
@@ -975,6 +1242,7 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
 @app.post("/v1/chat/completions")
 async def chat(request: Request, token: str = Depends(get_token)):
     body = await request.json()
+    note_user_activity()  # a live request aborts any in-flight dream
     executor.current_task = "THINKING"
 
     target_model = body.get("model")
@@ -1217,6 +1485,7 @@ async def prepare_chat_context(body: dict):
     /v1/chat/completions does, duplicated here rather than shared (see note above).
     Returns (target_model, incoming_messages). Vision/Moondream payloads are rejected;
     callers should route those to /v1/chat/completions, which keeps its own vision path."""
+    note_user_activity()  # a live request aborts any in-flight dream
     target_model = body.get("model")
     available_model = get_available_model()
 
