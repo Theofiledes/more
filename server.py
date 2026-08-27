@@ -568,10 +568,57 @@ async def transcribe(audio: UploadFile = File(...), token: str = Depends(get_tok
         except OSError:
             pass
 
-# Must match the model's real running context (see `ollama show ornith:9b` / /api/ps
-# "context_length", and the Modelfile's PARAMETER num_ctx) — this is not enforced by
-# Ollama, it's just how the UI's context gauge and the trim below stay honest about it.
-MODEL_CONTEXT_LIMIT = int(os.getenv("BMO_CONTEXT_LIMIT", "16384"))
+# Fallback only. The real limit is read from Ollama per-model by get_model_context_limit()
+# below; this is what we use when Ollama can't tell us (model not loaded yet, API change).
+# Set BMO_CONTEXT_LIMIT to override detection entirely.
+MODEL_CONTEXT_LIMIT = int(os.getenv("BMO_CONTEXT_LIMIT", "8192"))
+_CONTEXT_LIMIT_FORCED = bool(os.getenv("BMO_CONTEXT_LIMIT"))
+
+# Cache per model tag so we're not hitting /api/ps on every single turn.
+_model_ctx_cache = {}
+
+async def get_model_context_limit(model_name: str) -> int:
+    """Ask Ollama what context this model ACTUALLY runs with, rather than trusting a
+    hardcoded number. Swapping models used to silently break the context gauge and the
+    history trim: a freshly pulled model has no `PARAMETER num_ctx` and lands on Ollama's
+    small default (often 4096) while the UI kept claiming whatever was configured here.
+
+    /api/ps reports the live `context_length` for a loaded model — that's the truth. If
+    the model isn't loaded yet we fall back to its Modelfile's num_ctx, then to the
+    configured default."""
+    if _CONTEXT_LIMIT_FORCED:
+        return MODEL_CONTEXT_LIMIT
+    if not model_name:
+        return MODEL_CONTEXT_LIMIT
+    if model_name in _model_ctx_cache:
+        return _model_ctx_cache[model_name]
+
+    limit = None
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            ps = await client.get(f"{OLLAMA_URL}/api/ps")
+            if ps.is_success:
+                for m in ps.json().get("models", []):
+                    if m.get("name") == model_name or m.get("model") == model_name:
+                        limit = m.get("context_length")
+                        break
+            if not limit:
+                # Not loaded — fall back to whatever num_ctx its Modelfile declares.
+                show = await client.post(f"{OLLAMA_URL}/api/show", json={"model": model_name})
+                if show.is_success:
+                    params = show.json().get("parameters", "") or ""
+                    for line in params.splitlines():
+                        parts = line.split()
+                        if len(parts) == 2 and parts[0] == "num_ctx" and parts[1].isdigit():
+                            limit = int(parts[1])
+                            break
+    except Exception as e:
+        print(f"[CONTEXT] could not detect context for '{model_name}': {e}", flush=True)
+
+    limit = int(limit) if limit else MODEL_CONTEXT_LIMIT
+    _model_ctx_cache[model_name] = limit
+    print(f"[CONTEXT] '{model_name}' context limit: {limit}", flush=True)
+    return limit
 
 last_context_metrics = {
     "context_tokens": 350,
@@ -637,6 +684,13 @@ async def run_micro_agent(agent_name: str, task_desc: str):
     await broadcast_to_managers(f"\u001b[35m[MICRO-AGENT {agent_name}] Spawning sub-routine for task: '{task_desc[:60]}'...\u001b[0m")
     
     if agent_info.get("type") == "cli":
+        # Aider is an optional external tool, not a Python dependency of this project —
+        # without this check the shell just reports "aider: command not found" buried in
+        # stderr, which reads like a BMO bug rather than a missing install.
+        if not shutil.which(agent_info["cmd"]) and not os.path.isabs(agent_info["cmd"]):
+            return (f"[{agent_name}] Aider is not installed. This micro-agent needs the "
+                    f"Aider CLI: `pip install aider-install && aider-install` "
+                    f"(see https://aider.chat). Everything else in BMO works without it.")
         try:
             gem_key = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY", "")
             env_vars = os.environ.copy()
@@ -845,8 +899,9 @@ async def chat(request: Request, token: str = Depends(get_token)):
     incoming_messages = body.get("messages", [])
     save_payload_media_to_scratch(incoming_messages)
 
-    # Token-budget-aware context window: trim oldest history to fit the model's real context
-    incoming_messages = trim_messages_to_budget(incoming_messages)
+    # Token-budget-aware context window, sized to whatever this model actually runs with.
+    limit_tokens = await get_model_context_limit(target_model)
+    incoming_messages = trim_messages_to_budget(incoming_messages, limit_tokens=limit_tokens)
 
     # Inject BMO SOUL & Memory System Prompt if not present (Bypass for moondream vision model)
     if "moondream" not in target_model:
@@ -858,7 +913,6 @@ async def chat(request: Request, token: str = Depends(get_token)):
 
     # Update Context Usage Projections
     used_tokens = estimate_tokens(incoming_messages)
-    limit_tokens = MODEL_CONTEXT_LIMIT
     context_percent = min(100, round((used_tokens / limit_tokens) * 100))
     last_context_metrics["context_tokens"] = used_tokens
     last_context_metrics["context_limit"] = limit_tokens
@@ -1063,7 +1117,8 @@ async def prepare_chat_context(body: dict):
     elif not target_model:
         target_model = available_model
 
-    incoming_messages = trim_messages_to_budget(body.get("messages", []))
+    limit_tokens = await get_model_context_limit(target_model)
+    incoming_messages = trim_messages_to_budget(body.get("messages", []), limit_tokens=limit_tokens)
 
     system_prompt = build_system_prompt()
     if not incoming_messages or incoming_messages[0].get("role") != "system":
@@ -1073,8 +1128,8 @@ async def prepare_chat_context(body: dict):
 
     used_tokens = estimate_tokens(incoming_messages)
     last_context_metrics["context_tokens"] = used_tokens
-    last_context_metrics["context_limit"] = MODEL_CONTEXT_LIMIT
-    last_context_metrics["context_percent"] = min(100, round((used_tokens / MODEL_CONTEXT_LIMIT) * 100))
+    last_context_metrics["context_limit"] = limit_tokens
+    last_context_metrics["context_percent"] = min(100, round((used_tokens / limit_tokens) * 100))
     last_context_metrics["active_messages"] = len(incoming_messages)
 
     return target_model, incoming_messages

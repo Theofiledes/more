@@ -36,3 +36,7 @@ __pycache__/
 scratch/
 history.json
 memory.db
+
+# Piper voice models are large and optional — see public/voices/README.md
+public/voices/*.onnx
+public/voices/*.onnx.json

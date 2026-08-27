@@ -91,6 +91,18 @@ pip install -r requirements-voice.txt
 Without it the mic button reports that voice input isn't configured; everything else works
 normally. Tune the model with `WHISPER_MODEL_SIZE` in `.env` (`tiny`→`large-v3`).
 
+### Optional: Aider (code-refactoring micro-agent)
+
+The `@aider_architect` micro-agent shells out to the [Aider](https://aider.chat) CLI for
+multi-file refactoring. It's an external tool, not a Python dependency:
+
+```bash
+pip install aider-install && aider-install
+```
+
+BMO passes it your local Ollama model automatically (or Gemini, if you've set a key).
+Without it, that one micro-agent reports it isn't installed; nothing else is affected.
+
 ### Optional: Android APK
 
 ```bash
@@ -254,10 +266,19 @@ Make BMO yours by editing **`SOUL.md`** — personality, voice, and tool rules a
 |---|---|
 | Start BMO (and Ollama if needed) | `./wake-bmo.sh` |
 | Stop BMO | `pkill -f "uvicorn server:app"` |
-| Check status | `curl -H "Authorization: Bearer $VITE_BMO_API_KEY" localhost:18789/v1/health` |
+| Check status | `pgrep -fl "uvicorn server:app"` |
+| Health check | `curl -H "Authorization: Bearer $VITE_BMO_API_KEY" localhost:18789/v1/health` |
 | Rebuild web UI | `npm run build` |
 | Frontend dev server | `npm run dev -- --host` |
 | Lint | `npm run lint` |
+
+Handy shell aliases — add to `~/.bashrc` (adjust the path to your checkout):
+
+```bash
+alias wake-bmo='/path/to/bmoapp/wake-bmo.sh'
+alias stop-bmo='pkill -f "uvicorn server:app"'
+alias bmo-status='pgrep -fl "uvicorn server:app"'
+```
 
 ---
 
