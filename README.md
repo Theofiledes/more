@@ -22,7 +22,7 @@ machine. Ships as a web app and an Android APK.
 | **Python 3.10+** | Runs the FastAPI backend. |
 | **Node.js 22+** | Required by the Capacitor 8 CLI. A `.nvmrc` is included (`nvm use`). |
 | **[Ollama](https://ollama.com)** | Provides the local model. Must be running. |
-| **A chat model** | Any tool-capable Ollama model, e.g. `qwen3`, `llama3.1`. |
+| **A chat model** | Any tool-capable Ollama model. `qwen2.5:3b` is a good default — see below. |
 | **`moondream`** *(optional)* | Only needed for image/vision replies. |
 | **JDK 17 + Android SDK** *(optional)* | Only needed to build the Android APK. |
 
@@ -46,8 +46,18 @@ python3 -c "import secrets; print('VITE_BMO_API_KEY=' + secrets.token_urlsafe(32
 # paste that line into .env
 
 # 4. Pull a model
-ollama pull qwen3
+ollama pull qwen2.5:3b
 ```
+
+**Choosing a model.** The one that matters most is whether it fits in your VRAM — a model
+that spills to CPU is many times slower. On a 4GB card, a 3B model at Q4 answered in ~5s
+where a 9B took ~26s for the same prompt. Check with `ollama ps` after sending a message:
+if `SIZE_VRAM` is well below `SIZE`, part of it is running on the CPU.
+
+Also prefer a model that follows instructions closely. BMO reports tool results (weather,
+shell output) back to you, and some small models embellish — one tested model invented a
+kernel version rather than reporting the real one. `docs/MODEL_SEARCH_PROMPT.md` has a
+prompt for finding candidates that fit your hardware.
 
 ### Run
 
@@ -56,7 +66,18 @@ ollama pull qwen3
 ```
 
 This starts Ollama (if needed) and the BMO server, then prints your access URLs. Open the
-laptop link it gives you. To rebuild the web UI after changing frontend code:
+laptop link it gives you.
+
+**Verify your install:**
+
+```bash
+python3 scripts/check_setup.py
+```
+
+Checks your token, Ollama, the model's real context window, the server, auth, and a live
+round trip — and tells you exactly what to change for anything that fails.
+
+To rebuild the web UI after changing frontend code:
 
 ```bash
 npm run build     # server.py serves dist/ directly

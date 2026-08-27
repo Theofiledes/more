@@ -40,3 +40,6 @@ memory.db
 # Piper voice models are large and optional — see public/voices/README.md
 public/voices/*.onnx
 public/voices/*.onnx.json
+
+# Local agent/tool scratch — not part of the project
+.gemini/

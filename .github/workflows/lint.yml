@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
 
       - name: Install Node Dependencies
@@ -24,3 +24,21 @@ jobs:
 
       - name: Run ESLint
         run: npm run lint
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+      # Catches import errors, syntax breaks and bad decorator ordering before they
+      # reach a user's machine — server.py only fails at import time, not at build.
+      - name: Import-check the server
+        env:
+          API_TOKEN: ci-placeholder-token
+        run: python -c "import importlib.util,sys; spec=importlib.util.spec_from_file_location('srv','server.py'); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print('server.py imports cleanly')"
+      - name: Byte-compile everything
+        run: python -m compileall -q server.py memory_manager.py device_auth.py scripts/
