@@ -160,7 +160,10 @@ const fetchGemini = async (command, image = null, file = null, history = []) => 
   }
   contents.push({ role: "user", parts: userParts });
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
+    // The "gemini-flash-latest" alias has its own quota pool that 429s while pinned
+    // versions on the same key succeed — pin one, and let it be overridden.
+    const geminiModel = import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.7-flash';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

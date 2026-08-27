@@ -51,6 +51,7 @@ def get_whisper_model():
     return _whisper_model
 
 from memory_manager import memory_manager
+from device_auth import device_auth, PAIRING_CODE_TTL_SECONDS
 
 app = FastAPI()
 auth_scheme = HTTPBearer()
@@ -318,6 +319,10 @@ async def watchdog():
             failure_count = 0
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
+# The "gemini-flash-latest" alias resolves to a model with its own (easily exhausted)
+# quota pool — it returned 429 while pinned versions on the same key returned 200.
+# Pin a real version and let it be overridden.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
 
 async def perform_dream_synthesis():
     text_sample = ""
@@ -347,7 +352,7 @@ async def perform_dream_synthesis():
     if GEMINI_API_KEY:
         try:
             await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Calling Gemini Cloud API for deep dream distillation...\u001b[0m")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
             g_payload = {
                 "contents": [{"parts": [{"text": prompt}]}]
             }
@@ -404,9 +409,25 @@ async def dream_synthesis_cron():
         await asyncio.sleep(1800) # Every 30 minutes
         await perform_dream_synthesis()
 
+def announce_bootstrap_pairing_code():
+    """With no devices enrolled yet, mint a first pairing code and print it here.
+    The console/log is the trust anchor: only someone with shell or log access to
+    this host can enroll device #1. Every device after that is invited in-app."""
+    if device_auth.device_count() > 0:
+        return
+    code = device_auth.create_pairing_code("first-run bootstrap")
+    print("\n" + "=" * 70)
+    print("  BMO DEVICE PAIRING — no devices enrolled yet.")
+    print(f"  Pairing code:  {code}")
+    print(f"  Valid for {PAIRING_CODE_TTL_SECONDS // 60} minutes, single use.")
+    print("  Enter it in the app to pair this device.")
+    print("  Restart the server to generate a new one.")
+    print("=" * 70 + "\n", flush=True)
+
 @app.on_event("startup")
 async def startup():
     enforce_scratch_cap()  # in case scratch/ was already over the cap before this existed
+    announce_bootstrap_pairing_code()
     asyncio.create_task(watchdog())
     asyncio.create_task(heartbeat())
     asyncio.create_task(pre_warm_brain())
@@ -446,8 +467,67 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", _DEFAULT_CORS_ORIGI
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 def get_token(auth: HTTPAuthorizationCredentials = Depends(auth_scheme)):
-    if not API_TOKEN or auth.credentials != API_TOKEN: raise HTTPException(status_code=401)
-    return auth.credentials
+    """Accepts either a per-device token (see device_auth.py) or the shared API_TOKEN.
+
+    API_TOKEN is kept deliberately as break-glass: wake-bmo.sh uses it for its own
+    health check and prints it in the launch banner, and it's the way back in if
+    every device somehow gets revoked."""
+    cred = auth.credentials
+    if API_TOKEN and cred == API_TOKEN:
+        return cred
+    if device_auth.verify_token(cred):
+        return cred
+    raise HTTPException(status_code=401)
+
+class PairRedeem(BaseModel):
+    code: str
+    device_name: str = ""
+
+class PairCreate(BaseModel):
+    label: str = ""
+
+# Redeeming is the one endpoint an unauthenticated caller can reach, so it gets a
+# crude throttle — codes are 8 chars from a 32-char alphabet, but no reason to let
+# anyone grind them.
+_redeem_attempts = {}
+
+@app.post("/v1/pair/redeem")
+async def pair_redeem(payload: PairRedeem, request: Request):
+    """Exchange a pairing code for this device's own token. No auth required — the
+    code IS the credential, and it's single-use and short-lived."""
+    client = request.client.host if request.client else "unknown"
+    now = time.time()
+    attempts = [t for t in _redeem_attempts.get(client, []) if now - t < 300]
+    if len(attempts) >= 10:
+        raise HTTPException(status_code=429, detail="Too many pairing attempts. Wait a few minutes.")
+    attempts.append(now)
+    _redeem_attempts[client] = attempts
+
+    token = device_auth.redeem_pairing_code(payload.code, payload.device_name)
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid, expired, or already-used pairing code.")
+    _redeem_attempts[client] = []
+    await broadcast_to_managers(
+        f"[32m[PAIRING] New device enrolled: '{payload.device_name or 'Unnamed device'}'[0m")
+    return {"token": token, "device_name": payload.device_name or "Unnamed device"}
+
+@app.post("/v1/pair/new")
+async def pair_new(payload: PairCreate, token: str = Depends(get_token)):
+    """Mint an invite code for another device. Requires an already-paired device."""
+    code = device_auth.create_pairing_code(payload.label)
+    await broadcast_to_managers(f"[36m[PAIRING] Invite code issued (expires in 15 min).[0m")
+    return {"code": code, "expires_in_seconds": PAIRING_CODE_TTL_SECONDS}
+
+@app.get("/v1/devices")
+async def list_devices(token: str = Depends(get_token)):
+    return {"devices": device_auth.list_devices()}
+
+@app.post("/v1/devices/{device_id}/revoke")
+async def revoke_device(device_id: int, token: str = Depends(get_token)):
+    if not device_auth.revoke_device(device_id):
+        raise HTTPException(status_code=404, detail="No such device.")
+    await broadcast_to_managers(f"[31m[PAIRING] Device {device_id} revoked.[0m")
+    return {"status": "revoked", "id": device_id}
 
 @app.get("/v1/health")
 async def health():
@@ -712,7 +792,7 @@ async def run_micro_agent(agent_name: str, task_desc: str):
             env_vars = os.environ.copy()
             if gem_key:
                 env_vars["GEMINI_API_KEY"] = gem_key
-                model_flag = "--model gemini/gemini-flash-latest"
+                model_flag = f"--model gemini/{GEMINI_MODEL}"
             else:
                 model_flag = f"--model ollama/{get_available_model()} --openai-api-base {OLLAMA_URL}/v1"
 
