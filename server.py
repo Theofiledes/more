@@ -8,7 +8,7 @@ import asyncio
 import signal
 import sys
 from datetime import datetime
-from fastapi import FastAPI, Request, HTTPException, Depends, status, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, HTTPException, Depends, status, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,26 @@ try:
     import psutil
 except ImportError:
     psutil = None
+
+# Voice input (push-to-talk transcription) is optional — faster-whisper pulls in
+# ctranslate2 plus a model download, which is real weight for a self-hoster who just
+# wants text chat. Not installed by default; /v1/transcribe reports itself as
+# unavailable rather than failing the whole server if it's missing. See
+# requirements-voice.txt.
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    WhisperModel = None
+_whisper_model = None
+
+def get_whisper_model():
+    global _whisper_model
+    if WhisperModel is None:
+        return None
+    if _whisper_model is None:
+        size = os.getenv("WHISPER_MODEL_SIZE", "base")
+        _whisper_model = WhisperModel(size, device="cpu", compute_type="int8")
+    return _whisper_model
 
 from memory_manager import memory_manager
 
@@ -342,9 +362,12 @@ async def perform_dream_synthesis():
         try:
             model = get_available_model()
             await broadcast_to_managers(f"\u001b[35m[DREAM SYNTHESIS] Using local model '{model}' for memory distillation...\u001b[0m")
+            # 30s was too tight: a 9B model on CPU takes ~22s for this prompt on the dev
+            # machine, so the nightly cron logged a wall of "Read timed out" and silently
+            # never formed a memory. Slower hardware needs more headroom still.
             res = requests.post(f"{OLLAMA_URL}/v1/chat/completions",
                                 json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 100},
-                                timeout=30)
+                                timeout=int(os.getenv("DREAM_TIMEOUT_SECONDS", "180")))
             if res.ok:
                 summary = res.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         except Exception as e:
@@ -501,9 +524,58 @@ async def web_search(query: str, token: str = Depends(get_token)):
         return {"status": "error", "message": str(e)}
     return {"status": "error", "message": "Search query failed."}
 
+@app.post("/v1/transcribe")
+async def transcribe(audio: UploadFile = File(...), token: str = Depends(get_token)):
+    """Push-to-talk voice transcription. 503s cleanly if faster-whisper isn't installed —
+    voice input is an optional extra (see requirements-voice.txt), not a hard dependency."""
+    model = get_whisper_model()
+    if model is None:
+        raise HTTPException(status_code=503, detail="Voice input not configured — install faster-whisper (see requirements-voice.txt) to enable it.")
+    suffix = os.path.splitext(audio.filename or "")[1] or ".webm"
+    tmp_path = os.path.join(SCRATCH_DIR, f"ptt_{int(time.time()*1000)}{suffix}")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(await audio.read())
+        # Whisper confabulates on quiet audio — a recording with no one talking into the
+        # phone reliably produced invented sentences ("I've got a few tickets for one of
+        # them...") rather than an empty result, which is worse than nothing since it
+        # lands straight in the user's input box. vad_filter alone did NOT suppress this
+        # on faint room noise, so gate on level first: someone speaking to the handset
+        # peaks far above this, distant chatter does not.
+        try:
+            from faster_whisper.audio import decode_audio
+            import numpy as np
+            waveform = decode_audio(tmp_path, sampling_rate=16000)
+            peak = float(np.max(np.abs(waveform))) if getattr(waveform, "size", 0) else 0.0
+            if peak < float(os.getenv("VOICE_MIN_PEAK", "0.02")):
+                print(f"[TRANSCRIBE] rejected: peak {peak:.4f} below speech threshold", flush=True)
+                return {"text": ""}
+        except Exception as gate_err:
+            # Never let the guard itself break transcription.
+            print(f"[TRANSCRIBE] level check skipped: {gate_err}", flush=True)
+        segments, _info = model.transcribe(tmp_path, beam_size=5, vad_filter=True)
+        # no_speech_prob is per-segment; drop anything the model itself thinks isn't speech.
+        text = " ".join(
+            seg.text.strip() for seg in segments
+            if getattr(seg, "no_speech_prob", 0.0) < 0.6
+        ).strip()
+        return {"text": text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+# Must match the model's real running context (see `ollama show ornith:9b` / /api/ps
+# "context_length", and the Modelfile's PARAMETER num_ctx) — this is not enforced by
+# Ollama, it's just how the UI's context gauge and the trim below stay honest about it.
+MODEL_CONTEXT_LIMIT = int(os.getenv("BMO_CONTEXT_LIMIT", "16384"))
+
 last_context_metrics = {
     "context_tokens": 350,
-    "context_limit": 8192,
+    "context_limit": MODEL_CONTEXT_LIMIT,
     "context_percent": 4,
     "active_messages": 0
 }
@@ -521,6 +593,16 @@ def estimate_tokens(messages):
                     if isinstance(item, dict) and "text" in item:
                         total_chars += len(item["text"])
     return max(10, total_chars // 4)
+
+def trim_messages_to_budget(messages, limit_tokens=MODEL_CONTEXT_LIMIT, reserve_tokens=3000):
+    """Drop the oldest messages until the payload fits the model's real context, instead
+    of a flat message-count cap — reserve_tokens leaves room for the system prompt
+    (injected after this runs) and the model's reply. Always keeps at least the latest turn."""
+    budget = max(500, limit_tokens - reserve_tokens)
+    trimmed = list(messages)
+    while len(trimmed) > 1 and estimate_tokens(trimmed) > budget:
+        trimmed.pop(0)
+    return trimmed
 
 MICRO_AGENTS = {
     "@android_debugger": {
@@ -629,7 +711,8 @@ def build_system_prompt():
     soul = substitute_placeholders(memory_manager.get_workspace_file("SOUL.md") or "You are BMO.")
     agents = substitute_placeholders(memory_manager.get_workspace_file("AGENTS.md") or "")
     facts = memory_manager.get_recent_facts_summary(limit=5)
-    return f"{soul}\n\n### BMO MICRO-AGENTS & SUB-ROUTINE PLAYBOOKS:\n{agents}\n\n### RECENT MEMORY FACTS:\n{facts}"
+    now_str = datetime.now().astimezone().strftime("%A, %B %d, %Y — %I:%M %p %Z")
+    return f"{soul}\n\n### CURRENT DATE & TIME:\n{now_str}\n\n### BMO MICRO-AGENTS & SUB-ROUTINE PLAYBOOKS:\n{agents}\n\n### RECENT MEMORY FACTS:\n{facts}"
 
 @app.get("/v1/models")
 async def list_models(token: str = Depends(get_token)):
@@ -762,9 +845,8 @@ async def chat(request: Request, token: str = Depends(get_token)):
     incoming_messages = body.get("messages", [])
     save_payload_media_to_scratch(incoming_messages)
 
-    # Light context window: trim history to latest 10 messages
-    if len(incoming_messages) > 10:
-        incoming_messages = incoming_messages[-10:]
+    # Token-budget-aware context window: trim oldest history to fit the model's real context
+    incoming_messages = trim_messages_to_budget(incoming_messages)
 
     # Inject BMO SOUL & Memory System Prompt if not present (Bypass for moondream vision model)
     if "moondream" not in target_model:
@@ -776,7 +858,7 @@ async def chat(request: Request, token: str = Depends(get_token)):
 
     # Update Context Usage Projections
     used_tokens = estimate_tokens(incoming_messages)
-    limit_tokens = 8192
+    limit_tokens = MODEL_CONTEXT_LIMIT
     context_percent = min(100, round((used_tokens / limit_tokens) * 100))
     last_context_metrics["context_tokens"] = used_tokens
     last_context_metrics["context_limit"] = limit_tokens
@@ -940,9 +1022,19 @@ async def chat(request: Request, token: str = Depends(get_token)):
 # by holding back the first ~40 chars of each turn to (a) pull out a [face:xxx]
 # tag before it ever reaches the client and (b) detect whether this turn is a
 # tool call — if so, nothing is streamed to the client for that turn at all.
+#
+# That head-check only catches a tool call that starts immediately. A chatty model
+# routinely emits a few sentences of preamble first, then the JSON — fenced or bare,
+# extract_tool_call() below accepts both — and that preamble already streamed as
+# normal text before we could tell. LATE_GATE_RE watches for the tool-call schema's
+# own signature ({"tool" / {"tool_call"), not just a fence, so it catches both forms
+# as they arrive anywhere later in the same turn — gating mid-stream instead of only
+# swapping in the sanitized text once the
+# whole tool round-trip finishes (the flash-then-replace behavior this fixes).
 # ============================================================================
 
 FACE_TAG_RE = re.compile(r'\[face:\s*([a-zA-Z0-9_-]+)\]', re.I)
+LATE_GATE_RE = re.compile(r'\{\s*"tool')
 STREAM_HEAD_HOLD = 40
 
 def sse(event: dict) -> str:
@@ -971,9 +1063,7 @@ async def prepare_chat_context(body: dict):
     elif not target_model:
         target_model = available_model
 
-    incoming_messages = body.get("messages", [])
-    if len(incoming_messages) > 10:
-        incoming_messages = incoming_messages[-10:]
+    incoming_messages = trim_messages_to_budget(body.get("messages", []))
 
     system_prompt = build_system_prompt()
     if not incoming_messages or incoming_messages[0].get("role") != "system":
@@ -983,8 +1073,8 @@ async def prepare_chat_context(body: dict):
 
     used_tokens = estimate_tokens(incoming_messages)
     last_context_metrics["context_tokens"] = used_tokens
-    last_context_metrics["context_limit"] = 8192
-    last_context_metrics["context_percent"] = min(100, round((used_tokens / 8192) * 100))
+    last_context_metrics["context_limit"] = MODEL_CONTEXT_LIMIT
+    last_context_metrics["context_percent"] = min(100, round((used_tokens / MODEL_CONTEXT_LIMIT) * 100))
     last_context_metrics["active_messages"] = len(incoming_messages)
 
     return target_model, incoming_messages
@@ -996,6 +1086,7 @@ async def stream_ollama_turn(payload: dict):
     to the client for it; the caller runs extract_tool_call() on the complete text."""
     stream_payload = {**payload, "stream": True}
     parts, head, decided, gated = [], "", False, False
+    late_tail = ""  # short rolling window of streamed content, checked for a late fence start
     async with httpx.AsyncClient(timeout=180.0) as client:
         async with client.stream("POST", f"{OLLAMA_URL}/v1/chat/completions", json=stream_payload) as resp:
             async for line in resp.aiter_lines():
@@ -1005,9 +1096,16 @@ async def stream_ollama_turn(payload: dict):
                 if data == "[DONE]":
                     break
                 try:
-                    delta_text = json.loads(data).get("choices", [{}])[0].get("delta", {}).get("content") or ""
+                    delta = json.loads(data).get("choices", [{}])[0].get("delta", {})
                 except Exception:
                     continue
+                # Thinking-capable models (e.g. ornith:9b) put chain-of-thought in a
+                # separate `reasoning` field, never mixed into `content` — Ollama already
+                # does this split for us, so just forward it as its own event type.
+                reasoning_text = delta.get("reasoning") or ""
+                if reasoning_text:
+                    yield {"type": "thinking", "text": reasoning_text}
+                delta_text = delta.get("content") or ""
                 if not delta_text:
                     continue
                 parts.append(delta_text)
@@ -1026,8 +1124,14 @@ async def stream_ollama_turn(payload: dict):
                         yield {"type": "gated"}
                     elif head:
                         yield {"type": "delta", "text": head}
+                        late_tail = head[-10:]
                 elif not gated:
-                    yield {"type": "delta", "text": delta_text}
+                    late_tail = (late_tail + delta_text)[-40:]
+                    if LATE_GATE_RE.search(late_tail):
+                        gated = True
+                        yield {"type": "gated"}
+                    else:
+                        yield {"type": "delta", "text": delta_text}
     text = "".join(parts)
     if not decided:
         m = FACE_TAG_RE.search(text)

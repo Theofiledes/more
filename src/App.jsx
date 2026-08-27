@@ -3,7 +3,7 @@ import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkl
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
-import Settings from './components/Settings';
+import Settings, { APP_VERSION } from './components/Settings';
 import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import OnboardingModal from './components/OnboardingModal';
@@ -69,7 +69,7 @@ const fontStyle = `
 
 // Cosmetic lock only — NOT security. The real access gate is the API_TOKEN the
 // server requires; anyone with it can bypass this UI entirely via the raw API.
-// Override with VITE_BMO_USERS="Name:pin,Name2:pin2" (e.g. "Anthony:8436,Kayla:4321").
+// Override with VITE_BMO_USERS="Name:pin,Name2:pin2" (e.g. "Ada:1234,Grace:5678").
 const USERS = (() => {
   const raw = import.meta.env.VITE_BMO_USERS;
   if (raw) {
@@ -341,7 +341,7 @@ const canStreamHere = () => typeof window !== 'undefined' && !window.Capacitor?.
 const streamLocalBmoCommand = async (command, history = [], model = "", callbacks = {}) => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
-  const { onFace, onDelta, onStatus, onPendingApproval } = callbacks;
+  const { onFace, onDelta, onStatus, onPendingApproval, onThinking, onGated } = callbacks;
   const msgs = [
     ...history.map(m => ({
       role: m.sender === 'user' ? 'user' : 'assistant',
@@ -375,8 +375,9 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
       switch (obj.type) {
         case 'face': finalEmotion = obj.value; onFace?.(obj.value); break;
         case 'delta': onDelta?.(obj.text); break;
+        case 'thinking': onThinking?.(obj.text); break;
         case 'status': onStatus?.(`⚡ ${obj.text}`); break;
-        case 'gated': onStatus?.('⚡ BMO IS REACHING FOR A TOOL...'); break;
+        case 'gated': onStatus?.('⚡ BMO IS REACHING FOR A TOOL...'); onGated?.(); break;
         case 'done': finalText = obj.text; break;
         case 'error': console.error('Stream error:', obj.message); break;
       }
@@ -409,7 +410,9 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
 
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(() => Object.keys(USERS)[0]);
+  // Single profile: the account switcher was removed, so this is read-only now. USERS
+  // still drives the login PIN and the name shown on messages.
+  const [currentUser] = useState(() => Object.keys(USERS)[0]);
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
   const [isServerSleeping, setIsServerSleeping] = useState(false);
   useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
@@ -485,6 +488,7 @@ export default function App() {
   const [isEating, setIsEating] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
+  const [streamingThinking, setStreamingThinking] = useState('');
   const [systemHealth, setSystemHealth] = useState({ backend: 'OFFLINE', ollama: 'OFFLINE' });
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingImageUrl, setPendingImageUrl] = useState(null);
@@ -683,22 +687,6 @@ export default function App() {
   const messagesEndRef = useRef(null);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
 
-  const handleUserToggle = (user) => {
-    playClick();
-    setIsAuthenticated(false);
-    localStorage.removeItem('bmo_authenticated');
-    localStorage.removeItem('bmo_messages');
-    localStorage.removeItem('bmo_input_buffer');
-    setSpeakingMsgId(null);
-    setCurrentUser(user);
-    setIsServerSleeping(false);
-    setPinInput('');
-    setIsMenuOpen(false);
-    setMessages([]);
-    setHistory([]);
-    setActiveChatId(null);
-  };
-
   const performServerHandshake = async (user) => {
     const apiUrl = getApiUrl();
     const apiToken = getApiToken();
@@ -830,7 +818,7 @@ export default function App() {
       }]);
     };
 
-    let emotion = null, cleanText;
+    let emotion = null, cleanText, thinkingText = '';
     if (activeBrain === 'gemini') {
       const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] }));
       const brt = await fetchGemini(ci, cim, cf, fh);
@@ -839,6 +827,7 @@ export default function App() {
       // Text-only local BMO chat: stream the reply. Images/files keep the existing
       // 2-stage Moondream path (sendLocalBmoCommand), which isn't streamed.
       let pendPart = '', flushTimer = null;
+      let thinkPend = '', thinkFlushTimer = null, thinkAccum = '';
       const result = await streamLocalBmoCommand(ci, cam.slice(-6), activeModel, {
         onFace: (emo) => { if (EMOTION_MAP[emo]) setActiveEmotion(emo); },
         onStatus: (msg) => setThinkingStatus(msg),
@@ -852,11 +841,35 @@ export default function App() {
             }, 50);
           }
         },
+        onThinking: (text) => {
+          thinkAccum += text;
+          thinkPend += text;
+          if (!thinkFlushTimer) {
+            thinkFlushTimer = setTimeout(() => {
+              setStreamingThinking(s => s + thinkPend);
+              thinkPend = ''; thinkFlushTimer = null;
+            }, 50);
+          }
+        },
+        // Server detected mid-stream that this turn is actually a tool call (a fenced
+        // JSON block started after some chatty preamble already streamed as text) —
+        // wipe what's rendered so far instead of leaving it to flash-then-swap once the
+        // tool round-trip's real answer arrives in `done`.
+        onGated: () => {
+          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+          pendPart = '';
+          setStreamingText('');
+        },
       });
       if (pendPart) setStreamingText(s => s + pendPart); // flush any trailing coalesced text
       setStreamingText('');
+      setStreamingThinking('');
       cleanText = result.text || "BMO is computing... If there is no reply, please check local server link!";
       emotion = result.emotion;
+      // Capped before it ever reaches localStorage — reasoning can run to thousands of
+      // tokens per turn and localStorage's persist guard (see bmo_messages effect above)
+      // only drops the whole write on quota failure, it doesn't evict to make room.
+      thinkingText = thinkAccum.length > 4000 ? `${thinkAccum.slice(0, 4000)}\n\n[...truncated]` : thinkAccum;
     } else {
       const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel, (msg) => setThinkingStatus(msg), onPendingApproval);
       const brt = res || "[face:happy] BMO is computing... If there is no reply, please check local server link!";
@@ -870,7 +883,7 @@ export default function App() {
     setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
     // eslint-disable-next-line react-hooks/purity -- same handleSend event-handler context as above
     const bmi = Date.now() + Math.random();
-    const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText };
+    const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText, thinking: thinkingText || undefined };
     setMessages(prev => [...prev, bmsg]);
     
     if (autoSpeak && !parseToolCall(cleanText)) {
@@ -888,6 +901,43 @@ export default function App() {
       playCheer();
     }
     setTimeout(() => setIsHappy(false), 2000);
+  };
+
+  const handleVoiceCaptured = async (blob) => {
+    showToast('🎤 TRANSCRIBING VOICE...', 'info');
+    try {
+      const apiUrl = getApiUrl();
+      const apiToken = getApiToken();
+      const form = new FormData();
+      form.append('audio', blob, 'ptt.webm');
+      const res = await fetch(`${apiUrl}/v1/transcribe`, {
+        method: 'POST',
+        headers: { "Authorization": `Bearer ${apiToken}` },
+        body: form
+      });
+      if (res.status === 503) {
+        showToast('🟡 VOICE INPUT NOT CONFIGURED ON THIS SERVER', 'warning');
+        return;
+      }
+      if (!res.ok) {
+        showToast('🟡 TRANSCRIPTION FAILED', 'warning');
+        return;
+      }
+      const data = await res.json();
+      if (data.text) {
+        setInputText(prev => (prev ? `${prev} ${data.text}` : data.text));
+        showToast('🟢 VOICE CAPTURED', 'success');
+      } else {
+        showToast('🟡 HEARD NOTHING', 'warning');
+      }
+    } catch (err) {
+      console.error("Voice transcription failed:", err);
+      showToast('🟡 TRANSCRIPTION FAILED — LINK DOWN?', 'warning');
+    }
+  };
+
+  const handleVoiceError = (message) => {
+    showToast(`🟡 ${message}`, 'warning');
   };
 
   const deleteLastMessage = () => {
@@ -1004,8 +1054,11 @@ export default function App() {
                     </div>
                   )}
                   {isServerSleeping ? (
+                    // No second face here on purpose: BmoFace above already renders the
+                    // 'offline' expression (see faceState), so a z_z here read as BMO
+                    // having two faces at once.
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
-                      <div className="text-4xl mb-4">z_z</div><p className="mb-2">OFFLINE...</p>
+                      <p className="mb-2">OFFLINE...</p>
                       <button type="button" onClick={() => { playClick(); runDiagnostic(); }} className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] transition-all bmo-btn-tactile">RETRY LINK</button>
                     </div>
                   ) : !isAuthenticated ? (
@@ -1025,7 +1078,13 @@ export default function App() {
                           {streamingText}<span className="bmo-caret">▊</span>
                         </div>
                       )}
-                      {isLoading && !streamingText && (
+                      {isLoading && !streamingText && streamingThinking && (
+                        <div className="self-start max-w-[85%] p-2 sm:p-3 rounded-lg border-2 border-dashed border-[#2d482e]/60 bg-[#1a2e1d] text-[#8fae82] mx-3 mb-2 text-[9px] font-mono italic whitespace-pre-wrap opacity-90">
+                          <div className="not-italic font-bold opacity-60 mb-1 tracking-wide">💭 BMO IS THINKING...</div>
+                          {streamingThinking}<span className="bmo-caret">▊</span>
+                        </div>
+                      )}
+                      {isLoading && !streamingText && !streamingThinking && (
                         <div className="self-start p-3 rounded-xl border-2 border-[#2d482e] shadow-[3px_3px_0_#2d482e] bg-[#9fc28e] text-[#2d482e] font-bold animate-pulse mx-3 mb-2 flex items-center gap-2 text-[10px] bmo-font">
                           <Loader2 size={14} className="animate-spin text-[#007aff] shrink-0" />
                           <span>{thinkingStatus || "BMO IS COMPUTING... 🎮💭"}</span>
@@ -1074,19 +1133,11 @@ export default function App() {
                   <div className="absolute inset-0 bg-[#2d482e]/90 z-20 flex animate-in fade-in duration-200">
                     <div className="w-[85%] max-w-[250px] bg-[#b5d6a7] h-full border-r-4 border-[#2d482e] flex flex-col shadow-[5px_0_15px_rgba(0,0,0,0.5)]">
                       <div className="p-3 border-b-4 border-[#2d482e] flex justify-between items-center bg-[#9fc28e]">
-                        <span className="font-bold text-[#2d482e]">SYSTEM (v7.2.0 - WEATHER & AI)</span>
+                        <span className="font-bold text-[#2d482e]">SYSTEM ({APP_VERSION})</span>
                         <button type="button" onClick={() => { playClick(); setIsMenuOpen(false); }} className="text-[#ff3b30]"><X size={20} /></button>
                       </div>
                       <div className="p-3 border-b-4 border-[#2d482e] bg-[#cbe3c0] overflow-y-auto">
                          <div className="text-[8px] text-[#2d482e] mb-2 font-bold uppercase tracking-widest">Preferences</div>
-                         <button type="button" onClick={async () => { 
-                            playChime();
-                            showToast('🔄 REFRESHING BMO LINK & MODELS...', 'info');
-                            await checkBackendDeploymentStatus();
-                            showToast('🟢 LINK STABLE: BMO online & synced!', 'success');
-                            tts.speak("BMO connection refreshed and online!", undefined, voiceRate, voicePitch); 
-                            setIsMenuOpen(false); 
-                         }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#007aff] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🔊 WAKE & REFRESH SYNC</button>
                          <button type="button" onClick={() => { playClick(); setIsDashboardOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#ffcc00] text-[#2d482e] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🎮 BMO DASHBOARD</button>
                          <button type="button" onClick={() => { playClick(); setIsTerminalOverlayOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#2d482e] text-[#b5d6a7] flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_white] bmo-btn-tactile">📟 SYSTEM TERMINAL</button>
                          <button type="button" onClick={() => { playChime(); setIsOnboardingOpen(true); setIsMenuOpen(false); }} className="w-full mb-2 p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] bg-[#34c759] text-white flex items-center justify-center gap-2 font-bold uppercase text-center shadow-[1px_1px_0_black] bmo-btn-tactile">🎓 REPLAY TUTORIAL</button>
@@ -1094,14 +1145,6 @@ export default function App() {
                          <button type="button" onClick={() => { playChime(); setActiveBrain(b => b === 'local' ? 'gemini' : 'local'); }} className={`w-full p-2 text-[8px] sm:text-[10px] rounded border-2 border-[#2d482e] transition-colors bmo-btn-tactile ${activeBrain === 'local' ? 'bg-[#ff3b30] text-white shadow-[1px_1px_0_black]' : 'bg-[#007aff] text-white shadow-[1px_1px_0_black]'}`}>{activeBrain === 'local' ? '🤖 LOCAL BMO (OLLAMA)' : '☁️ GEM BMO (CLOUD)'}</button>
                       </div>
 
-                      <div className="p-3 border-b-4 border-[#2d482e] bg-[#7ba068]">
-                        <div className="text-[8px] text-white mb-2 flex items-center justify-between font-bold uppercase tracking-widest">Accounts</div>
-                        <div className="flex flex-col gap-2 text-xs">
-                          {Object.keys(USERS).map(user => (
-                            <button key={user} type="button" onClick={() => handleUserToggle(user)} className={`p-2 rounded border-2 border-[#2d482e] text-left bmo-btn-tactile ${currentUser === user ? 'bg-[#007aff] text-white shadow-[1px_1px_0_black]' : 'bg-[#b5d6a7] shadow-[1px_1px_0_black]'}`}>{user.toUpperCase()}</button>
-                          ))}
-                        </div>
-                      </div>
                       {isAuthenticated && (
                         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
                           <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-1 font-bold text-xs bmo-btn-tactile"><Plus size={16} /> NEW CHAT</button>
@@ -1120,7 +1163,7 @@ export default function App() {
             </div>
             {/* LABELS & HARDWARE */}
             <div className="mt-4 px-2 sm:px-4">
-               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onClearActiveChat={handleClearActiveChat} onStopTTS={onStopTTS} onScrollUp={handleScrollUp} onScrollDown={handleScrollDown} />
+               <HardwareControls onSend={handleSend} onUploadFile={() => fileInputRef.current?.click()} onOpenCamera={() => cameraInputRef.current?.click()} onDeleteLast={deleteLastMessage} onClearActiveChat={handleClearActiveChat} onStopTTS={onStopTTS} onScrollUp={handleScrollUp} onScrollDown={handleScrollDown} onVoiceCaptured={handleVoiceCaptured} onVoiceError={handleVoiceError} />
             </div>
           </div>
           {/* DASHBOARD RIGHT PANE (Desktop Only) */}

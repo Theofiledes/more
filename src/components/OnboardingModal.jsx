@@ -55,7 +55,7 @@ const STEPS = [
           </div>
           <div className="bg-[#9fc28e] p-2 border-2 border-[#2d482e] rounded flex items-center gap-1.5">
             <span className="w-4 h-4 bg-[#e6b800] border border-[#2d482e] rounded flex items-center justify-center text-[#2d482e]"><Mic size={10} /></span>
-            <div><strong className="block text-[8px]">PTT (CENTER)</strong>Push-to-talk mic</div>
+            <div><strong className="block text-[8px]">TALK (CENTER)</strong>Tap to record, tap to send</div>
           </div>
           <div className="bg-[#9fc28e] p-2 border-2 border-[#2d482e] rounded flex items-center gap-1.5">
             <span className="w-4 h-4 bg-[#ffcc00] border border-[#2d482e] rounded flex items-center justify-center font-bold text-[7px]">►</span>
@@ -75,22 +75,27 @@ const STEPS = [
   },
   {
     id: 3,
-    title: 'VOICE & RETRO SOUND SYNTH',
-    subtitle: 'Custom Rate, Pitch & Web Audio API Synthesis',
+    title: 'TALKING WITH BMO',
+    subtitle: 'Voice In, Voice Out & Retro Sound Synth',
     icon: Volume2,
     color: '#34c759',
     content: (
       <div className="flex flex-col gap-2.5 text-left">
+        <div className="bg-[#9fc28e] border-2 border-[#2d482e] p-2.5 rounded-lg flex flex-col gap-2 text-[9px] text-[#2d482e]">
+          <div className="flex items-center gap-2">
+            <Mic size={16} className="text-[#ff3b30] shrink-0" />
+            <span><strong>TALK TO BMO:</strong> Tap the center mic to record, tap again to stop. Your words land in the text box so you can edit before sending.</span>
+          </div>
+          <div className="border-t border-[#2d482e]/20 pt-2 text-[8px] italic opacity-80">
+            Voice input is an optional server add-on. If it isn't installed, BMO will say so instead of listening.
+          </div>
+        </div>
         <p className="text-[9px] sm:text-[10px] leading-relaxed text-[#2d482e]">
-          Fine-tune BMO's voice personality and audio dynamics in the <strong>Settings</strong> pane:
+          BMO talks back too — tune the voice in <strong>Settings</strong>:
         </p>
         <div className="bg-[#9fc28e] border-2 border-[#2d482e] p-2.5 rounded-lg flex flex-col gap-2">
           <div className="flex justify-between items-center text-[9px] font-bold text-[#2d482e]">
-            <span>VOICE SPEED (RATE):</span>
-            <span className="bg-[#2d482e] text-[#b5d6a7] px-2 py-0.5 rounded font-mono">0.5x - 2.0x</span>
-          </div>
-          <div className="flex justify-between items-center text-[9px] font-bold text-[#2d482e]">
-            <span>VOICE PITCH:</span>
+            <span>VOICE SPEED / PITCH:</span>
             <span className="bg-[#2d482e] text-[#b5d6a7] px-2 py-0.5 rounded font-mono">0.5 - 2.0</span>
           </div>
           <div className="border-t border-[#2d482e]/20 pt-2 flex justify-between items-center text-[9px] text-[#2d482e]">
@@ -138,14 +143,45 @@ const STEPS = [
         <div className="bg-[#9fc28e] border-2 border-[#2d482e] p-2.5 rounded-lg flex flex-col gap-2 text-[9px] text-[#2d482e]">
           <div className="flex justify-between items-center">
             <span className="font-bold">🤖 LOCAL BRAIN:</span>
-            <span className="bg-[#ff3b30] text-white px-2 py-0.5 rounded text-[8px] font-bold">OLLAMA (OFFLINE SAFE)</span>
+            <span className="bg-[#ff3b30] text-white px-2 py-0.5 rounded text-[8px] font-bold">OLLAMA (DEFAULT)</span>
           </div>
           <div className="flex justify-between items-center">
             <span className="font-bold">☁️ GEMINI BRAIN:</span>
-            <span className="bg-[#007aff] text-white px-2 py-0.5 rounded text-[8px] font-bold">CLOUD ULTRA-SPEED</span>
+            <span className="bg-[#007aff] text-white px-2 py-0.5 rounded text-[8px] font-bold">NEEDS API KEY</span>
+          </div>
+          <div className="text-[8px] italic opacity-80">
+            BMO runs fully on your own hardware by default. Cloud mode only works if you add your own Gemini key.
           </div>
           <div className="border-t border-[#2d482e]/20 pt-2 text-[8px]">
-            <strong>TAILSCALE LINK:</strong> Configure your custom server endpoint in Settings to connect BMO anywhere over secure mesh networking.
+            <strong>REMOTE LINK:</strong> Set your server address in Settings to reach BMO from your phone — a private mesh network like Tailscale is the safe way to do it.
+          </div>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 6,
+    title: 'TOOLS, SAFETY & TELEMETRY',
+    subtitle: 'What BMO Can Do To Your Machine — And How To Watch It',
+    icon: ShieldCheck,
+    color: '#ffcc00',
+    content: (
+      <div className="flex flex-col gap-2.5 text-left">
+        <p className="text-[9px] sm:text-[10px] leading-relaxed text-[#2d482e]">
+          BMO is not just a chatbot — it can run real commands on the machine hosting it.
+        </p>
+        <div className="bg-[#9fc28e] border-2 border-[#2d482e] p-2.5 rounded-lg flex flex-col gap-2 text-[9px] text-[#2d482e]">
+          <div className="flex items-start gap-2">
+            <ShieldCheck size={16} className="text-[#ffcc00] shrink-0 mt-0.5" />
+            <span><strong>GUARDIAN PROTOCOL:</strong> Leave this ON in Settings and BMO must ask before running a shell command — you approve or reject each one.</span>
+          </div>
+          <div className="flex items-start gap-2 border-t border-[#2d482e]/20 pt-2">
+            <Sparkles size={16} className="text-[#007aff] shrink-0 mt-0.5" />
+            <span><strong>SEE IT THINK:</strong> BMO shows its reasoning while it works. Tap SHOW REASONING on any reply to reread how it got there.</span>
+          </div>
+          <div className="flex items-start gap-2 border-t border-[#2d482e]/20 pt-2">
+            <Cpu size={16} className="text-[#34c759] shrink-0 mt-0.5" />
+            <span><strong>DASHBOARD:</strong> Live CPU, memory, disk and a context-window gauge, so you can see how much memory BMO has left in a conversation.</span>
           </div>
         </div>
       </div>
@@ -210,9 +246,6 @@ export default function OnboardingModal({ isOpen, onClose }) {
             <div>
               <div className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-[#2d482e]">
                 BMO TUTORIAL ({currentStep + 1}/{STEPS.length})
-              </div>
-              <div className="text-[7px] sm:text-[8px] opacity-75 font-sans font-bold">
-                TEST GROUP READY
               </div>
             </div>
           </div>

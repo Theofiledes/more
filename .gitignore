@@ -30,3 +30,9 @@ __pycache__/
 
 .env
 .env
+
+# BMO runtime state — personal data, not source.
+# scratch/ caches images and files you send BMO (including photos).
+scratch/
+history.json
+memory.db

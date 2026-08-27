@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, ChevronDown, RefreshCw, Bug, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play, Keyboard, Sparkles } from 'lucide-react';
-import * as Sentry from "@sentry/capacitor";
+import { Shield, ChevronDown, RefreshCw, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play, Keyboard, Sparkles } from 'lucide-react';
 import { playClick, playChime, playGlitch } from '../utils/soundEffects';
 
-const APP_VERSION = "v7.1.0-DYNAMIC";
+export const APP_VERSION = "v7.2.0";
 
 const Settings = ({
   activeModel,
@@ -85,17 +84,6 @@ const Settings = ({
     }
   };
 
-  const testSentry = () => {
-    playClick();
-    alert("Sentry Test: Triggering intentional error...");
-    try {
-      throw new Error("BMO Sentry Diagnostic: " + new Date().toISOString());
-    } catch (e) {
-      Sentry.captureException(e);
-      alert("Error captured and sent to Sentry.");
-    }
-  };
-
   const handleTestVoice = () => {
     playClick();
     if (tts?.speak) {
@@ -121,7 +109,6 @@ const Settings = ({
     playChime();
     const diagReport = `[BMO DIAGNOSTIC REPORT]
 App Version: ${APP_VERSION}
-Test Group: TEST GROUP A (STABLE)
 Active User: ${currentUser}
 Server URL: ${getApiUrl()}
 Backend Health: ${systemHealth?.backend || 'UNKNOWN'}
@@ -362,17 +349,13 @@ Timestamp: ${new Date().toISOString()}`;
         </div>
       </div>
 
-      {/* TEST GROUP DIAGNOSTICS */}
+      {/* SYSTEM DIAGNOSTICS */}
       <div className="border-t-2 border-[#2d482e] pt-3 flex flex-col gap-2">
         <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 border-b border-[#2d482e]/30 pb-1">
-          <Activity size={12} /> TEST GROUP DIAGNOSTICS
+          <Activity size={12} /> SYSTEM DIAGNOSTICS
         </div>
 
         <div className="bg-[#9fc28e] border-2 border-[#2d482e] rounded p-2 flex flex-col gap-1 text-[7px]">
-          <div className="flex justify-between items-center">
-            <span className="opacity-70">TEST GROUP:</span>
-            <span className="bg-[#2d482e] text-[#b5d6a7] px-1.5 py-0.5 rounded font-mono font-bold">GROUP A (READY)</span>
-          </div>
           <div className="flex justify-between items-center">
             <span className="opacity-70">BACKEND STATE:</span>
             <span className={`font-mono font-bold ${systemHealth?.backend === 'OK' ? 'text-green-800' : 'text-red-700'}`}>
@@ -418,14 +401,6 @@ Timestamp: ${new Date().toISOString()}`;
           className="w-full py-3 bg-[#ff3b30] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[8px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none uppercase"
         >
           <RefreshCw size={12} /> RECONNECT BRAIN LINK
-        </button>
-        
-        <button 
-          type="button" 
-          onClick={testSentry}
-          className="w-full py-2 bg-[#007aff] text-white rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] text-[7px] font-bold flex items-center justify-center gap-2 active:translate-y-[1px] active:shadow-none uppercase"
-        >
-          <Bug size={10} /> FORCE SENTRY TEST
         </button>
       </div>
     </div>

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Play, FileText, Image as ImageIcon, StopCircle } from 'lucide-react';
+import { Play, FileText, Image as ImageIcon, StopCircle, Brain } from 'lucide-react';
 
 const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken }) => {
   const [expandedToolId, setExpandedToolId] = useState(null);
+  const [expandedThinkId, setExpandedThinkId] = useState(null);
 
   const handleApproval = async (approved) => {
     try {
@@ -128,10 +129,27 @@ const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, set
                   )}
                 </div>
               ) : (
-                <div 
+                <>
+                {msg.sender === 'bmo' && msg.thinking && (
+                  <div className="w-full mb-1">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedThinkId(expandedThinkId === msg.id ? null : msg.id)}
+                      className="flex items-center gap-1 px-2 py-1 rounded border border-[#2d482e]/40 bg-[#1a2e1d] text-[#8fae82] text-[7px] font-mono opacity-80 hover:opacity-100"
+                    >
+                      <Brain size={9} /> {expandedThinkId === msg.id ? 'HIDE REASONING' : 'SHOW REASONING'}
+                    </button>
+                    {expandedThinkId === msg.id && (
+                      <div className="mt-1 p-2 bg-[#1a2e1d] border-2 border-[#2d482e] rounded-lg text-[8px] font-mono italic text-[#8fae82] overflow-x-auto max-h-40 whitespace-pre-wrap shadow-inner">
+                        {msg.thinking}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div
                   className={`p-2 sm:p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] ${
-                    msg.sender === 'user' 
-                      ? 'bg-[#cbe3c0] text-[#2d482e]' 
+                    msg.sender === 'user'
+                      ? 'bg-[#cbe3c0] text-[#2d482e]'
                       : 'bg-[#7ba068] text-white'
                   }`}
                 >
@@ -161,6 +179,7 @@ const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, set
                   
                   {msg.text && <p className="leading-relaxed" style={{ wordBreak: 'break-word' }}>{msg.text}</p>}
                 </div>
+                </>
               )}
 
               <span className="text-[8px] text-[#2d482e] mt-1 opacity-70">
