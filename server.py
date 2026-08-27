@@ -556,6 +556,22 @@ async def triage_is_notable(text_sample: str):
 
 MEMORY_CONSOLIDATE_AT = int(os.getenv("BMO_MEMORY_CONSOLIDATE_AT", "40"))
 
+BULLET_PREFIX_RE = re.compile(r'^\s*(?:[-*•‣●]|\d+[.)])\s*')
+
+def tidy_summary(text: str) -> str:
+    """Flatten a model's markdown answer into one plain line.
+
+    Small models answer "summarise this" as a bullet list no matter how the prompt is
+    worded, so a dream summary arrived as "* Yay! BMO checked...". That leading marker got
+    stored verbatim as a memory fact and shown as a chat message, where a stray asterisk
+    just reads as a bug. Strip the markers rather than fight the prompt.
+    """
+    lines = [BULLET_PREFIX_RE.sub('', ln).strip() for ln in (text or '').splitlines()]
+    lines = [ln for ln in lines if ln]
+    # Multi-bullet answers collapse to one line; a semicolon reads better than a dropped
+    # newline once this is inlined into a single memory fact.
+    return '; '.join(lines)
+
 async def consolidate_memory(force: bool = False):
     """Merge accumulated facts into fewer, denser ones.
 
@@ -625,7 +641,7 @@ async def consolidate_memory(force: bool = False):
 
     merged = []
     for line in merged_text.splitlines():
-        line = re.sub(r'^\s*(?:[-*\u2022]|\d+[.)])\s*', '', line).strip()
+        line = BULLET_PREFIX_RE.sub('', line).strip()
         if len(line) > 8:
             merged.append(line[:300])
     merged = merged[:target]
@@ -736,6 +752,7 @@ async def perform_dream_synthesis():
         except Exception as e:
             print("Local Dream Synthesis error:", e)
 
+    summary = tidy_summary(summary)
     if summary:
         fact = f"Dream Milestone: {summary}"
         memory_manager.add_fact(fact)

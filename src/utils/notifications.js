@@ -62,7 +62,19 @@ export const notify = async ({ title, body, id }) => {
         body: (body || '').slice(0, 240),
         smallIcon: 'ic_launcher_foreground',
         iconColor: '#5FD3BC',
-        schedule: { at: new Date(Date.now() + 200) },   // immediate, but off the UI thread
+        // Two things keep this on the immediate path, and BOTH are required.
+        //
+        // No `schedule` field: any `schedule.at` — even 200ms out — hands the
+        // notification to AlarmManager instead of posting it. Without one, the plugin
+        // calls NotificationManager.notify() directly.
+        //
+        // `isExactNotification: false`: this defaults to TRUE and is checked *before*
+        // the schedule is looked at, so on Android 12+ an unscheduled notification still
+        // triggers the "Alarms & reminders" settings screen and posts nothing. That
+        // permission is separate from the normal notification prompt, so a user who
+        // granted notifications sees BMO bounce them to a settings page and never
+        // notify. BMO never needs an exact alarm — it notifies about what just happened.
+        isExactNotification: false,
       }],
     });
     return true;
@@ -90,12 +102,29 @@ export const testNotification = async () => {
   if (!granted) {
     return { ok: false, reason: `Permission is "${permissionState || 'unknown'}" — enable notifications for BMO in Android settings.` };
   }
+  const id = Date.now();
   const sent = await notify({
-    id: Date.now(),
+    id,
     title: 'BMO test',
     body: 'Notifications are working. This is what BMO will look like when it learns something.',
   });
-  return sent
-    ? { ok: true, reason: 'Sent. Check your notification shade.' }
-    : { ok: false, reason: 'Android accepted the permission but rejected the notification.' };
+  if (!sent) {
+    return { ok: false, reason: 'Android accepted the permission but rejected the notification.' };
+  }
+
+  // Don't trust `sent`. The plugin resolves successfully in cases where it posted
+  // nothing at all — an exact-alarm notification on Android 12+ opens a settings screen
+  // and still resolves, so this button once reported "Sent" while nothing was delivered.
+  // A test that can pass without the thing under test happening is worse than no test.
+  try {
+    const wanted = Math.abs(id % 2147483647);
+    const { notifications } = await LocalNotifications.getDeliveredNotifications();
+    if (!notifications?.some((n) => n.id === wanted)) {
+      return { ok: false, reason: 'Android reported success but delivered nothing. Check BMO under Settings > Apps > Notifications.' };
+    }
+  } catch {
+    // Some platforms don't implement getDeliveredNotifications; absence of the check
+    // isn't evidence of failure, so fall through to the optimistic answer.
+  }
+  return { ok: true, reason: 'Sent. Check your notification shade.' };
 };
