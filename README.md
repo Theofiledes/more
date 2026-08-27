@@ -305,6 +305,14 @@ alias bmo-status='pgrep -fl "uvicorn server:app"'
 
 ---
 
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Worth reading first if you're changing anything
+that touches the system prompt, tool-result handling, or cloud escalation — those have
+constraints that aren't obvious from the code.
+
+---
+
 ## 📄 License
 
 [MIT](LICENSE) — do what you like with it, just keep the copyright notice.

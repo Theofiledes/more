@@ -1,0 +1,75 @@
+# Contributing to BMO
+
+Thanks for taking a look. BMO is a self-hosted AI companion, which shapes what
+"contributing" means here: most people will run it on their own hardware, with their own
+model, on their own network. Changes that make that easier are the most valuable ones.
+
+## Before you start
+
+Run the setup check — it verifies your install and names the fix for anything broken:
+
+```bash
+python3 scripts/check_setup.py
+```
+
+## Development
+
+```bash
+# backend (auto-reloads)
+source venv/bin/activate
+uvicorn server:app --reload --port 18789
+
+# frontend (hot reload on :5173)
+npm run dev
+```
+
+`server.py` serves the built `dist/` directly, so for backend-only work you can skip the
+dev server and just `npm run build` once.
+
+## Before opening a PR
+
+```bash
+npm run lint                     # must pass clean
+python3 -m compileall -q server.py memory_manager.py device_auth.py scripts/
+python3 scripts/check_setup.py   # end-to-end sanity
+```
+
+CI runs ESLint plus a Python import check. That import check exists because `server.py`
+only fails at *import* time, not at build time — a decorator referencing a dependency
+defined further down the file will pass every other check and then refuse to boot.
+
+## Things worth knowing
+
+**Model behavior is a feature, not a detail.** BMO reports tool results — weather, shell
+output — back to the user. Some small models embellish: during development one invented a
+kernel version rather than reporting the real one. If you change how tool results are
+summarized, test it against a real tool call and compare the output to what the tool
+actually returned.
+
+**The context window is a shared budget.** `SOUL.md` costs roughly 960 tokens on every
+single message, memory facts about 30 each. Anything you add to the system prompt is paid
+for on every turn, forever. Measure before adding.
+
+**Escalation sends user data off-device.** Anything routed to the cloud leaves the user's
+machine and costs them money. It must respect `escalation_mode` — and `off` means off,
+with no convenience flag able to override it.
+
+**Anything `VITE_`-prefixed ends up in the client bundle in plaintext**, including any
+published APK. Never read a secret through one that shouldn't be public.
+
+**Destructive operations need an undo.** Memory consolidation archives rather than
+deletes, and refuses implausible merges, because a model silently discarding what BMO
+learned is unrecoverable otherwise. Hold new destructive paths to the same standard.
+
+## Style
+
+Match the surrounding code — it's plain React and plain FastAPI, no framework beyond
+that. Comments should explain *why*, especially where something looks odd; a fair amount
+of this codebase is shaped by specific model or platform behavior that isn't obvious from
+reading it.
+
+## Security
+
+Please don't open a public issue for a vulnerability. BMO executes shell commands by
+design, so the interesting bugs are the ones that let someone reach that without
+authorization. Report those privately to the maintainer first.
