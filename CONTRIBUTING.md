@@ -61,6 +61,24 @@ published APK. Never read a secret through one that shouldn't be public.
 deletes, and refuses implausible merges, because a model silently discarding what BMO
 learned is unrecoverable otherwise. Hold new destructive paths to the same standard.
 
+### Adding a Capacitor plugin
+
+`BUILD SUCCESSFUL` does not mean the plugin is in your APK. A stale Gradle cache can
+report `compileDebugKotlin UP-TO-DATE` while producing an **empty** `classes.jar` — the
+plugin's manifest still merges, so Android tries to start a component whose class isn't
+in the dex and the app crashes on launch with `ClassNotFoundException`. That happened
+here with `@capacitor/local-notifications`.
+
+After adding a plugin, check the class actually shipped:
+
+```bash
+unzip -p android/app/build/outputs/apk/debug/app-debug.apk classes*.dex \
+  | grep -c YourPluginClassName
+```
+
+If it's missing, `rm -rf node_modules/@scope/plugin/android/build` and rebuild. CI is
+unaffected — it builds from a clean checkout every time.
+
 ## Style
 
 Match the surrounding code — it's plain React and plain FastAPI, no framework beyond
