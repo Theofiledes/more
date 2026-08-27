@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { KeyRound, Loader2, Link as LinkIcon } from 'lucide-react';
+import { KeyRound, Loader2 } from 'lucide-react';
 import { getApiUrl, setDeviceToken } from '../utils/api';
+import ServerAddressField from './ServerAddressField';
 import { playChime, playGlitch } from '../utils/soundEffects';
 
 /**
@@ -16,17 +17,6 @@ const PairingScreen = ({ onPaired }) => {
   const [deviceName, setDeviceName] = useState('');
   const [status, setStatus] = useState(null); // {type:'error'|'info', text}
   const [busy, setBusy] = useState(false);
-  const [serverUrl, setServerUrl] = useState(() => {
-    if (typeof localStorage === 'undefined') return '';
-    return localStorage.getItem('bmo_custom_api_url') || '';
-  });
-
-  const saveServerUrl = (val) => {
-    setServerUrl(val);
-    if (typeof localStorage === 'undefined') return;
-    if (val.trim()) localStorage.setItem('bmo_custom_api_url', val.trim().replace(/\/$/, ''));
-    else localStorage.removeItem('bmo_custom_api_url');
-  };
 
   const submit = async () => {
     if (!code.trim() || busy) return;
@@ -110,21 +100,7 @@ const PairingScreen = ({ onPaired }) => {
           </div>
         )}
 
-        {/* Pairing is useless if the app is pointed at the wrong host, and this screen
-            renders before Settings is reachable — so the address is editable here too. */}
-        <div className="mt-3 pt-3 border-t-2 border-[#2d482e]/30 flex flex-col gap-1">
-          <div className="text-[7px] opacity-70 uppercase tracking-widest flex items-center gap-1 justify-center">
-            <LinkIcon size={9} /> SERVER ADDRESS
-          </div>
-          <input
-            type="text"
-            value={serverUrl}
-            onChange={(e) => saveServerUrl(e.target.value)}
-            placeholder="http://localhost:18789"
-            className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[8px] p-2 rounded text-center"
-          />
-          <div className="text-[6px] opacity-60">USING: {getApiUrl()}</div>
-        </div>
+        <ServerAddressField />
       </div>
     </div>
   );

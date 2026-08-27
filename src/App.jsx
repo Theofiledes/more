@@ -5,6 +5,7 @@ import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
 import Settings, { APP_VERSION } from './components/Settings';
 import PairingScreen from './components/PairingScreen';
+import ServerAddressField from './components/ServerAddressField';
 import { notify, appIsBackgrounded, ensureNotificationPermission } from './utils/notifications';
 import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
@@ -1242,9 +1243,17 @@ export default function App() {
                     // No second face here on purpose: BmoFace above already renders the
                     // 'offline' expression (see faceState), so a z_z here read as BMO
                     // having two faces at once.
-                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
-                      <p className="mb-2">OFFLINE...</p>
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e] overflow-y-auto">
+                      <p className="mb-1">OFFLINE...</p>
+                      <p className="text-[8px] opacity-70 mb-3 max-w-[240px]">
+                        BMO can&apos;t reach the server. Check it&apos;s running, and that the
+                        address below is right for this network.
+                      </p>
                       <button type="button" onClick={() => { playClick(); runDiagnostic(); }} className="px-4 py-2 bg-[#007aff] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] hover:translate-y-[2px] transition-all bmo-btn-tactile">RETRY LINK</button>
+                      {/* Editable here on purpose: this screen is otherwise a dead end —
+                          Settings is behind the menu, and the pairing screen only appears
+                          on a 401, not when the host is simply unreachable. */}
+                      <ServerAddressField onChange={() => runDiagnostic()} />
                     </div>
                   ) : needsPairing ? (
                     /* Ahead of the PIN gate on purpose: without a valid device token
