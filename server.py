@@ -257,7 +257,55 @@ executor = AgentExecutor()
 # Guardian Protocol: when enabled, BMO's run_command tool pauses for user
 # approval (via /v1/approve or /v1/reject) instead of executing immediately.
 # Mirrors the frontend's Settings > Guardian Protocol toggle (bmo_safety_stride).
-runtime_state = {"safety_stride": True, "is_dreaming": False}
+runtime_state = {
+    "safety_stride": True,
+    "is_dreaming": False,
+    # How far BMO may go when it decides a thought needs a bigger brain than the local
+    # model. "ask" is the default on purpose: escalating sends your recent conversation
+    # to Google and costs money, so it should be a decision, not a default.
+    #   off  — never leave the device
+    #   ask  — BMO surfaces the request and waits for you
+    #   auto — escalate freely, up to the daily budget below
+    "escalation_mode": os.getenv("BMO_ESCALATION_MODE", "ask"),
+    "escalation_budget": int(os.getenv("BMO_ESCALATION_BUDGET", "20")),  # per day
+    # How much BMO may speak on its own after learning something.
+    #   off  — learn silently
+    #   note — may leave one short note about what it learned
+    #   full — may also ask questions / suggest next steps
+    "proactive_mode": os.getenv("BMO_PROACTIVE_MODE", "note"),
+}
+
+# Escalation accounting — reset daily, exposed so the UI can show what's left.
+escalation_log = {"date": None, "used": 0, "entries": [], "pending": None}
+
+def _escalation_today():
+    today = datetime.now().strftime("%Y-%m-%d")
+    if escalation_log["date"] != today:
+        escalation_log.update({"date": today, "used": 0, "entries": []})
+    return escalation_log
+
+def escalation_allowed():
+    """(allowed, reason). 'ask' returns False here — the caller surfaces a request
+    instead, so a pending ask never silently becomes a send."""
+    log = _escalation_today()
+    mode = runtime_state["escalation_mode"]
+    if mode == "off":
+        return False, "escalation disabled"
+    if log["used"] >= runtime_state["escalation_budget"]:
+        return False, f"daily budget spent ({log['used']}/{runtime_state['escalation_budget']})"
+    if mode == "ask":
+        return False, "needs your approval"
+    return True, "auto"
+
+def record_escalation(reason: str, chars_sent: int):
+    log = _escalation_today()
+    log["used"] += 1
+    log["entries"].append({
+        "at": datetime.now().strftime("%H:%M:%S"),
+        "reason": reason[:120],
+        "chars_sent": chars_sent,
+    })
+    log["entries"] = log["entries"][-25:]
 
 class ConnectionManager:
     def __init__(self): self.active_connections: List[WebSocket] = []
@@ -330,175 +378,42 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
 # Pin a real version and let it be overridden.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
 
-async def perform_dream_synthesis():
-    text_sample = ""
-    if os.path.exists("history.json"):
-        try:
-            with open("history.json", "r") as f:
-                hist = json.load(f)
-            msgs = hist.get("messages", [])
-            if msgs:
-                text_sample = "\n".join([f"{m.get('sender', 'user')}: {m.get('text', '')}" for m in msgs[-15:] if m.get('text')])
-        except Exception:
-            pass
+async def triage_is_notable(text_sample: str):
+    """Cheap local pass: is there anything here worth remembering at all?
 
-    # Fallback to scratch files & git activity if chat history is sparse
-    if not text_sample:
-        try:
-            proc = await asyncio.create_subprocess_shell("git log -n 5 --oneline", stdout=asyncio.subprocess.PIPE)
-            out, _ = await proc.communicate()
-            text_sample = f"Recent Git Commits:\n{out.decode().strip()}"
-        except Exception:
-            text_sample = "BMO app initialized with local vision, scratch storage, and full terminal control."
-
-    prompt = f"You are BMO's Dream Synthesizer. Summarize key user preferences, milestones, or important project facts from this context into 1 concise bullet point in BMO voice (max 25 words):\n\n{text_sample[:1500]}"
-
-    summary = ""
-    # 1. Try Gemini API if key is available
-    if GEMINI_API_KEY:
-        try:
-            await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Calling Gemini Cloud API for deep dream distillation...\u001b[0m")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-            g_payload = {
-                "contents": [{"parts": [{"text": prompt}]}]
-            }
-            res = requests.post(url, json=g_payload, timeout=20)
-            if res.ok:
-                # Thinking-capable Gemini models return the reasoning as its own part with
-                # no "text", so parts[0] can legitimately be empty — join every part that
-                # actually carries text instead of assuming the answer is first.
-                parts = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                summary = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
-            else:
-                # A 429 (free-tier rate limit) or 403 is not an exception, so without this
-                # the failure was completely silent and the local fallback looked like a
-                # mystery slowdown.
-                detail = ""
-                try:
-                    detail = res.json().get("error", {}).get("message", "")[:200]
-                except Exception:
-                    detail = res.text[:200]
-                msg = f"Gemini dream synthesis HTTP {res.status_code}: {detail}"
-                print(msg, flush=True)
-                await broadcast_to_managers(f"[33m[DREAM SYNTHESIS] {msg} — falling back to local model.[0m")
-        except Exception as e:
-            print("Gemini Dream Synthesis failed, falling back to local model:", e, flush=True)
-
-    # 2. Fallback to Local Ollama Model if Gemini is unavailable
-    if not summary:
-        try:
-            model = get_available_model()
-            await broadcast_to_managers(f"\u001b[35m[DREAM SYNTHESIS] Using local model '{model}' for memory distillation...\u001b[0m")
-            # 30s was too tight: a 9B model on CPU takes ~22s for this prompt on the dev
-            # machine, so the nightly cron logged a wall of "Read timed out" and silently
-            # never formed a memory. Slower hardware needs more headroom still.
-            res = requests.post(f"{OLLAMA_URL}/v1/chat/completions",
-                                json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 100},
-                                timeout=int(os.getenv("DREAM_TIMEOUT_SECONDS", "180")))
-            if res.ok:
-                summary = res.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-        except Exception as e:
-            print("Local Dream Synthesis error:", e)
-
-    if summary:
-        fact = f"Dream Milestone: {summary}"
-        memory_manager.add_fact(fact)
-        memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
-        await broadcast_to_managers(f"\u001b[32m[DREAM SYNTHESIS] New Memory Formed: '{summary}'\u001b[0m")
-        return summary
-
-    return None
-
-# --- IDLE-TRIGGERED DREAMING ---------------------------------------------------
-# Dreaming competes with the user for the GPU: on a 4GB card the chat model and a
-# synthesis pass do not coexist happily. So instead of a blind 30-minute timer, wait
-# for a lull, and abandon the dream the moment the user comes back — a half-finished
-# memory is worth less than a responsive BMO.
-DREAM_IDLE_SECONDS = int(os.getenv("DREAM_IDLE_SECONDS", "600"))      # lull before dreaming
-DREAM_MIN_GAP_SECONDS = int(os.getenv("DREAM_MIN_GAP_SECONDS", "1800"))  # floor between dreams
-
-dream_state = {
-    "last_activity": time.time(),   # updated on every real chat request
-    "last_dream": 0.0,
-    "last_summary": None,
-    "last_status": "idle",          # idle | dreaming | aborted | done | failed
-    "running": False,
-    "aborted_count": 0,
-}
-_dream_task = None
-
-def note_user_activity():
-    """Called on chat requests. Cancels an in-flight dream so the user never waits
-    behind BMO's own thinking."""
-    dream_state["last_activity"] = time.time()
-    task = _dream_task
-    if task and not task.done():
-        task.cancel()
-        dream_state["aborted_count"] += 1
-        dream_state["last_status"] = "aborted"
-
-async def run_dream(trigger: str = "idle"):
-    """One dream pass, cancellable. Returns the summary or None."""
-    global _dream_task
-    dream_state["running"] = True
-    dream_state["last_status"] = "dreaming"
-    await broadcast_to_managers(f"[35m[DREAM] Starting ({trigger})...[0m")
+    This is what makes escalation affordable and private. Most lulls contain nothing
+    notable, and deciding that should cost nothing and never leave the device — only a
+    "yes" earns a bigger brain. Returns (notable: bool, reason: str)."""
+    if not text_sample.strip():
+        return False, "nothing happened"
+    prompt = (
+        "You are a triage filter. Below is recent activity from a user's AI companion.\n"
+        "Decide if it contains anything genuinely worth remembering long-term about the "
+        "user or their project — a preference, a decision, a milestone, a recurring topic.\n"
+        "Small talk, greetings and one-off questions are NOT notable.\n"
+        'Reply with ONLY JSON: {"notable": true|false, "reason": "<8 words max>"}\n\n'
+        f"{text_sample[:1500]}"
+    )
     try:
-        summary = await perform_dream_synthesis()
-        dream_state["last_dream"] = time.time()
-        dream_state["last_summary"] = summary
-        dream_state["last_status"] = "done" if summary else "failed"
-        return summary
-    except asyncio.CancelledError:
-        dream_state["last_status"] = "aborted"
-        await broadcast_to_managers("[33m[DREAM] Aborted — you're back, BMO yields the GPU.[0m")
-        raise
-    finally:
-        dream_state["running"] = False
-        _dream_task = None
-
-async def dream_synthesis_cron():
-    """Dream during lulls rather than on a fixed clock."""
-    global _dream_task
-    while True:
-        await asyncio.sleep(30)
-        if dream_state["running"]:
-            continue
-        now = time.time()
-        idle_for = now - dream_state["last_activity"]
-        since_last = now - dream_state["last_dream"]
-        if idle_for < DREAM_IDLE_SECONDS or since_last < DREAM_MIN_GAP_SECONDS:
-            continue
-        _dream_task = asyncio.create_task(run_dream("idle"))
-        try:
-            await _dream_task
-        except asyncio.CancelledError:
-            pass  # user came back; try again after the next lull
-        except Exception as e:
-            dream_state["last_status"] = "failed"
-            print(f"[DREAM] failed: {e}", flush=True)
-
-# --- WATCHDOG ---
-failure_count = 0
-async def watchdog():
-    global failure_count
-    while True:
-        await asyncio.sleep(30)
-        try:
-            res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
-            if res.ok: failure_count = 0
-            else: failure_count += 1
-        except Exception: failure_count += 1
-
-        if failure_count >= 3:
-            await broadcast_to_managers("\u001b[31m[WATCHDOG] Local Ollama brain unresponsive. Retrying...\u001b[0m")
-            failure_count = 0
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
-# The "gemini-flash-latest" alias resolves to a model with its own (easily exhausted)
-# quota pool — it returned 429 while pinned versions on the same key returned 200.
-# Pin a real version and let it be overridden.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            r = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json={
+                "model": get_available_model(),
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.0, "max_tokens": 60,
+                # Constrained decoding — the sampler cannot emit a shape other than this,
+                # which is what makes a small model dependable as a router.
+                "response_format": {"type": "json_object"},
+            })
+        if r.is_success:
+            raw = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            m = re.search(r'\{.*\}', raw, re.S)
+            if m:
+                d = json.loads(m.group(0))
+                return bool(d.get("notable")), str(d.get("reason", ""))[:120]
+    except Exception as e:
+        print(f"[TRIAGE] failed, assuming notable: {e}", flush=True)
+    # Fail open: a broken filter should not silently stop BMO from ever learning.
+    return True, "triage unavailable"
 
 async def perform_dream_synthesis():
     text_sample = ""
@@ -523,10 +438,29 @@ async def perform_dream_synthesis():
 
     prompt = f"You are BMO's Dream Synthesizer. Summarize key user preferences, milestones, or important project facts from this context into 1 concise bullet point in BMO voice (max 25 words):\n\n{text_sample[:1500]}"
 
+    # Triage first — most lulls are not worth a memory, and deciding that locally is
+    # free and private. Only a "yes" is allowed to reach the cloud.
+    notable, triage_reason = await triage_is_notable(text_sample)
+    dream_state["last_triage"] = {"notable": notable, "reason": triage_reason}
+    if not notable:
+        await broadcast_to_managers(f"\u001b[36m[DREAM] Nothing notable ({triage_reason}) - staying quiet.\u001b[0m")
+        return None
+
     summary = ""
-    # 1. Try Gemini API if key is available
-    if GEMINI_API_KEY:
+    # 1. Escalate to the cloud only if the gate allows. "ask" deliberately does NOT send:
+    #    it records a pending request for the UI and falls through to the local model.
+    allowed, gate_reason = escalation_allowed()
+    if GEMINI_API_KEY and not allowed and runtime_state["escalation_mode"] == "ask":
+        escalation_log["pending"] = {
+            "at": datetime.now().strftime("%H:%M:%S"),
+            "reason": triage_reason,
+            "chars": len(text_sample[:1500]),
+        }
+        await broadcast_to_managers(
+            f"\u001b[33m[DREAM] Wants cloud help ({triage_reason}) - awaiting approval.\u001b[0m")
+    if GEMINI_API_KEY and allowed:
         try:
+            record_escalation(triage_reason, len(prompt))
             await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Calling Gemini Cloud API for deep dream distillation...\u001b[0m")
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
             g_payload = {
@@ -781,6 +715,51 @@ async def dream_status(token: str = Depends(get_token)):
         "idle_threshold_seconds": DREAM_IDLE_SECONDS,
         "min_gap_seconds": DREAM_MIN_GAP_SECONDS,
     }
+
+class AutonomySettings(BaseModel):
+    escalation_mode: str | None = None     # off | ask | auto
+    escalation_budget: int | None = None
+    proactive_mode: str | None = None      # off | note | full
+
+@app.get("/v1/autonomy")
+async def get_autonomy(token: str = Depends(get_token)):
+    log = _escalation_today()
+    return {
+        "escalation_mode": runtime_state["escalation_mode"],
+        "escalation_budget": runtime_state["escalation_budget"],
+        "escalation_used_today": log["used"],
+        "escalation_log": log["entries"][-10:],
+        "escalation_pending": log["pending"],
+        "proactive_mode": runtime_state["proactive_mode"],
+        "last_triage": dream_state.get("last_triage"),
+        "cloud_available": bool(GEMINI_API_KEY),
+    }
+
+@app.post("/v1/autonomy")
+async def set_autonomy(payload: AutonomySettings, token: str = Depends(get_token)):
+    if payload.escalation_mode in ("off", "ask", "auto"):
+        runtime_state["escalation_mode"] = payload.escalation_mode
+    if payload.escalation_budget is not None and 0 <= payload.escalation_budget <= 1000:
+        runtime_state["escalation_budget"] = payload.escalation_budget
+    if payload.proactive_mode in ("off", "note", "full"):
+        runtime_state["proactive_mode"] = payload.proactive_mode
+    return await get_autonomy(token)
+
+@app.post("/v1/autonomy/approve-escalation")
+async def approve_escalation(token: str = Depends(get_token)):
+    """Grant the one pending cloud request. Deliberately single-use: approving once
+    does not flip BMO to auto — the next thought asks again."""
+    log = _escalation_today()
+    if not log["pending"]:
+        raise HTTPException(status_code=404, detail="No pending escalation request.")
+    log["pending"] = None
+    prev = runtime_state["escalation_mode"]
+    runtime_state["escalation_mode"] = "auto"
+    try:
+        summary = await run_dream("approved-escalation")
+    finally:
+        runtime_state["escalation_mode"] = prev
+    return {"status": "ok", "summary": summary}
 
 @app.post("/v1/dream/now")
 async def dream_now(token: str = Depends(get_token)):
