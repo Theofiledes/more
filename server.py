@@ -1370,8 +1370,27 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
         if isinstance(content, str):
             content = re.sub(r'\[face:\s*([a-zA-Z0-9_-]+)\]', '', content).strip()
         if path:
-            ok = memory_manager.save_workspace_file(path, content)
-            output_str = f"File '{path}' saved successfully." if ok else f"Failed to save '{path}'."
+            try:
+                resolved = memory_manager.resolve_workspace_path(path, WORKSPACE_DIR)
+                memory_manager.save_workspace_file(path, content, workspace=WORKSPACE_DIR)
+                # Report where it actually landed, not where it was asked for — those
+                # used to differ silently.
+                output_str = f"File saved to {resolved}"
+                await broadcast_fn(f"[32m[TOOL: write_file] Wrote {resolved}[0m")
+            except PermissionError as e:
+                output_str = str(e)
+                await broadcast_fn(f"[31m[TOOL: write_file] {e}[0m")
+            except IsADirectoryError:
+                # Models routinely pass the containing directory instead of the file.
+                # Say exactly what is wrong so the next turn can fix it rather than
+                # repeating the same call.
+                output_str = (f"'{path}' is a directory, not a file. Call write_file "
+                              f"again with the full path including the filename, "
+                              f"e.g. {str(path).rstrip('/')}/yourfile.md")
+                await broadcast_fn(f"\u001b[31m[TOOL: write_file] '{path}' is a directory\u001b[0m")
+            except OSError as e:
+                output_str = f"Failed to save '{path}': {e}"
+                await broadcast_fn(f"[31m[TOOL: write_file] {e}[0m")
     elif tool_name in ["spawn_agent", "delegate", "micro_agent"]:
         agent_name = tool_call.get("agent") or tool_call.get("name")
         task_desc = tool_call.get("task") or tool_call.get("prompt", "")
@@ -1640,6 +1659,53 @@ FACE_TAG_RE = re.compile(r'\[face:\s*([a-zA-Z0-9_-]+)\]', re.I)
 # emit an invented block — observed live: a fabricated weather payload presented as
 # real data. Only the executor produces genuine results; anything the model writes
 # with these markers is fiction, so cut from the marker onward.
+# A model claiming an action it never performed is the worst failure mode here: the user
+# is told a file exists when it does not. Small models do this intermittently no matter
+# how firmly the system prompt forbids it, so detect the claim and force a real attempt
+# rather than trusting the prose.
+CLAIMED_ACTION_RE = re.compile(
+    r"\b(i(?:'| ha)?ve (?:created|written|added|saved|made)|i(?:'ll| will) (?:create|write|add|save|make)"
+    r"|here'?s? (?:is )?(?:the|your|a) [^.\n]{0,40}(?:file|note|script|markdown)"
+    r"|here'?s how it looks|i (?:created|added|wrote|saved))\b", re.I)
+# A filename with an extension, e.g. notes.md — used with a code fence as the giveaway
+# that the model is *showing* a file rather than writing one.
+FILENAME_RE = re.compile(r"\b[\w.-]+\.(?:md|txt|py|js|jsx|json|ya?ml|sh|html|css|toml)\b", re.I)
+
+# Tool outputs that mean "this did not work". The model is told the truth and still
+# sometimes reports success, so the server has to be able to recognise a failure itself.
+TOOL_ERROR_RE = re.compile(
+    r"\b(is a directory, not a file|failed to save|refusing to write|outside BMO's workspace"
+    r"|no such file|permission denied|command not found|is not installed|error:)", re.I)
+SUCCESS_CLAIM_RE = re.compile(
+    r"\b(success(?:fully)?|has been (?:created|saved|written)|was (?:created|saved|written)"
+    r"|i (?:created|saved|wrote)|all set|done!)\b", re.I)
+
+def contradicts_tool_failure(final_text: str, tool_output: str) -> bool:
+    """True when the tool reported failure but the reply claims it worked.
+
+    Observed live: write_file returned \"'<dir>' is a directory, not a file\" and the
+    model answered \"The markdown was written successfully!\". Telling someone a file
+    exists when it does not is the failure mode this whole guard exists to prevent, so
+    the server checks rather than trusting the paraphrase."""
+    if not tool_output or not final_text:
+        return False
+    if not TOOL_ERROR_RE.search(tool_output):
+        return False
+    return bool(SUCCESS_CLAIM_RE.search(final_text))
+
+def claims_action_without_doing(text: str) -> bool:
+    """True when the reply presents a file/action as done but carries no tool call.
+
+    Two signals, either is enough: an explicit claim ("I created...", "here's your
+    file"), or the subtler pattern of a fenced code block plus a filename — which is how
+    a model 'shows you the file' it never wrote. Both only count when no tool call is
+    present, since a reply that carries one is about to actually do the thing."""
+    if not text or extract_tool_call(text):
+        return False
+    if CLAIMED_ACTION_RE.search(text):
+        return True
+    return bool("```" in text and FILENAME_RE.search(text))
+
 FAKE_TOOL_RESULT_RE = re.compile(
     r'\[\s*TOOL[ _]EXECUTION[ _](?:RESULT|SUMMARY)\s*\].*', re.I | re.S)
 
@@ -1781,7 +1847,29 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
                 else:
                     yield sse(evt)
 
+            # If the model narrated an action instead of performing one, make it try
+            # again — once. Better a retry than telling the user a file exists when it
+            # doesn't. See claims_action_without_doing().
+            if claims_action_without_doing(response_text):
+                await broadcast_to_managers(
+                    "\u001b[33m[GUARD] Reply claimed an action with no tool call — retrying.\u001b[0m")
+                yield sse({"type": "status", "text": "RETRYING AS A REAL ACTION"})
+                retry_messages = list(incoming_messages) + [
+                    {"role": "assistant", "content": str(response_text)},
+                    {"role": "user", "content":
+                        "You described doing that instead of doing it, so nothing happened. "
+                        "Output ONLY the JSON tool call that actually performs it — no prose, "
+                        "no preview, no explanation. If it genuinely needs no tool, say so in "
+                        "one short sentence."},
+                ]
+                async for evt in stream_ollama_turn({**payload, "messages": retry_messages}):
+                    if evt["type"] == "_done":
+                        response_text = evt["text"]
+                    elif evt["type"] != "delta":
+                        yield sse(evt)
+
             turn_count = 0
+            last_tool_output = ""
             while turn_count < 5:
                 tool_call = extract_tool_call(response_text)
                 if not tool_call:
@@ -1789,6 +1877,7 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
                 tool_name = tool_call.get("tool") or tool_call.get("tool_call")
                 yield sse({"type": "status", "text": f"TOOL: {tool_name}"})
                 output_str = await execute_tool_call(tool_call, broadcast_to_managers)
+                last_tool_output = output_str or ""
                 if not output_str:
                     break
 
@@ -1814,6 +1903,10 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
 
             sanitized = strip_model_tool_artifacts(response_text)
             final_text = FACE_TAG_RE.sub("", sanitized if sanitized else response_text, count=1).strip()
+            if contradicts_tool_failure(final_text, last_tool_output):
+                await broadcast_to_managers(
+                    "\u001b[31m[GUARD] Reply claimed success after a tool failure — corrected.\u001b[0m")
+                final_text = (f"That didn't work, so I haven't done it: {last_tool_output.strip()}")
             yield sse({"type": "done", "text": final_text, "model": target_model})
         except Exception as e:
             yield sse({"type": "error", "message": str(e)})

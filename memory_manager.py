@@ -123,15 +123,41 @@ class MemoryManager:
             with open(clean_path, "r", encoding="utf-8") as f: return f.read()
         return None
 
-    def save_workspace_file(self, filename, content, append=False):
-        if not filename: return False
-        clean_path = os.path.normpath(filename).lstrip('/')
-        if clean_path.startswith(".."): return False
-        dir_name = os.path.dirname(clean_path)
+    def resolve_workspace_path(self, filename, workspace=None):
+        """Resolve a requested path, or raise if it escapes the workspace.
+
+        This used to `.lstrip('/')` an absolute path, which silently turned
+        /home/you/notes.md into ./home/you/notes.md — the write landed inside the repo
+        under a fabricated directory tree while the tool still reported success. Telling
+        someone a file was saved when it is somewhere else entirely is worse than
+        refusing, so out-of-workspace writes now raise instead of being relocated."""
+        if not filename:
+            raise ValueError("no path given")
+        workspace = os.path.abspath(workspace or os.getcwd())
+        candidate = os.path.expanduser(str(filename))
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(workspace, candidate)
+        resolved = os.path.abspath(os.path.normpath(candidate))
+        outside = resolved != workspace and not resolved.startswith(workspace + os.sep)
+        # run_command can already write anywhere, so confining write_file is not a real
+        # security boundary — but defaulting to the workspace keeps a fresh install from
+        # scattering files across someone's home directory. Opt in for multi-project use.
+        if outside and os.getenv("BMO_ALLOW_EXTERNAL_WRITES", "").lower() not in ("1", "true", "yes"):
+            raise PermissionError(
+                f"'{filename}' is outside BMO's workspace ({workspace}). "
+                f"Set BMO_ALLOW_EXTERNAL_WRITES=true in .env to allow writing elsewhere.")
+        return resolved
+
+    def save_workspace_file(self, filename, content, append=False, workspace=None):
+        """Returns True on success. Raises PermissionError for out-of-workspace paths so
+        the caller can report the real reason rather than a bare False."""
+        resolved = self.resolve_workspace_path(filename, workspace)
+        dir_name = os.path.dirname(resolved)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
         mode = "a" if append else "w"
-        with open(clean_path, mode, encoding="utf-8") as f: f.write(content)
+        with open(resolved, mode, encoding="utf-8") as f:
+            f.write(content)
         return True
 
     def count_facts(self):

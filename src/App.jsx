@@ -584,6 +584,11 @@ export default function App() {
     if (!text) return '';
     return text
       .replace(/\[face:\s*([a-zA-Z0-9_-]+)\]/gi, '')
+      // Drop *stage directions* entirely rather than just their asterisks. Models write
+      // "*smiles*" or "*Face with an exaggerated smile*" despite being told not to, and
+      // stripping only the punctuation left TTS reading the word "smiles" out loud.
+      // Bounded to one line and ~60 chars so it can't swallow real emphasised text.
+      .replace(/\*[^*\n]{1,60}\*/g, ' ')
       .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
       .replace(/\p{Extended_Pictographic}/gu, '')
       .replace(/[*_#>`~]/g, '')
