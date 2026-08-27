@@ -68,7 +68,20 @@ const AutonomyPanel = () => {
     } finally { setBusy(false); refresh(); }
   };
 
-  if (!data) return null;
+  // Don't just vanish when the server is unreachable — a settings section that silently
+  // disappears reads as a broken build rather than an offline link.
+  if (!data) {
+    return (
+      <div className="border-t-2 border-[#2d482e] pt-3 flex flex-col gap-1">
+        <div className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 border-b border-[#2d482e]/30 pb-1">
+          <Brain size={12} /> AUTONOMY
+        </div>
+        <div className="text-[7px] opacity-60 py-2 text-center">
+          Needs a live link to BMO — check the server address above.
+        </div>
+      </div>
+    );
+  }
 
   const Seg = ({ value, current, onPick, label, hint }) => (
     <button
