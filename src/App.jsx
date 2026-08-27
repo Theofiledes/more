@@ -71,6 +71,11 @@ const fontStyle = `
 // Cosmetic lock only — NOT security. The real access gate is the API_TOKEN the
 // server requires; anyone with it can bypass this UI entirely via the raw API.
 // Override with VITE_BMO_USERS="Name:pin,Name2:pin2" (e.g. "Ada:1234,Grace:5678").
+// Module scope on purpose: these ids are generated from event handlers and async
+// callbacks, never during render, but the purity rule can't tell the difference at
+// the call site. Keeping it in one helper beats scattering suppressions.
+const newLocalId = () => Date.now() + Math.random();
+
 const USERS = (() => {
   const raw = import.meta.env.VITE_BMO_USERS;
   if (raw) {
@@ -707,12 +712,29 @@ export default function App() {
       const res = await fetch(`${apiUrl}/v1/chat/history`, { headers: { "Authorization": `Bearer ${apiToken}` } });
       if (res.ok) {
         const data = await res.json();
-        setHistory(data.chats || []);
-        if (messages.length === 0) setMessages(data.messages || []);
-        const uc = (data.chats || []).filter(h => h.user === user);
-        let rid = activeChatId || (uc.length > 0 ? uc[0].id : 1);
-        if (history.length === 0 && uc.length === 0) setHistory([{ id: rid, user: user, title: 'NEW SESSION' }]);
-        setActiveChatId(rid); setIsAuthenticated(true); setIsServerSleeping(false);
+        const serverChats = data.chats || [];
+        const serverMsgs = (messages.length === 0) ? (data.messages || []) : messages;
+
+        // Every launch starts a fresh session, and any previous session that was never
+        // kept and never actually used gets dropped here rather than accumulating as
+        // empty "SESSION #n" entries nobody can remove.
+        const survivors = serverChats.filter(h =>
+          h.kept || serverMsgs.some(m => m.chatId === h.id && m.sender === 'user'));
+        const survivorIds = new Set(survivors.map(h => h.id));
+        const keptMsgs = serverMsgs.filter(m => survivorIds.has(m.chatId));
+
+        const ids = survivors.map(h => h.id).filter(n => typeof n === 'number');
+        const newId = ids.length ? Math.max(...ids) + 1 : 1;
+        const greeting = { id: newLocalId(), chatId: newId, user, sender: 'bmo',
+                           type: 'text', text: `GREETINGS ${user.toUpperCase()}! NEW CHAT SESSION READY.` };
+        const nextHistory = [{ id: newId, user, title: 'NEW SESSION', kept: false }, ...survivors];
+        const nextMessages = [...keptMsgs, greeting];
+
+        setHistory(nextHistory);
+        setMessages(nextMessages);
+        setActiveChatId(newId);
+        setIsAuthenticated(true); setIsServerSleeping(false);
+        saveServerHistory(nextHistory, nextMessages);
         playChime();
       } else {
         setIsAuthenticated(true); setIsServerSleeping(false); if (!activeChatId) setActiveChatId(1);
@@ -724,6 +746,18 @@ export default function App() {
       playGlitch();
     }
   };
+
+  // Re-run the handshake on launch when we're already authenticated. Without this it
+  // only ever ran after entering the PIN, so a returning user's session list was never
+  // loaded from the server — and the start-a-fresh-session-per-launch behavior above
+  // never fired either.
+  const didHandshakeRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || needsPairing || didHandshakeRef.current) return;
+    didHandshakeRef.current = true;
+    performServerHandshake(currentUser);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per launch, not on every history/message change
+  }, [isAuthenticated, needsPairing]);
 
   const handleAuth = async (e) => {
     if (e) { e.preventDefault(); e.stopPropagation(); }
@@ -749,16 +783,27 @@ export default function App() {
     } catch { /* ignored */ }
   };
 
-  const handleNewChat = (uo = null) => {
-    playChime();
+  // A session only earns its place in the list once there's a real exchange in it —
+  // otherwise every app launch would leave behind an empty "SESSION #n". Counts the
+  // user's own messages so BMO's canned greeting doesn't make a session look used.
+  const sessionHasContent = useCallback((chatId, msgs = messages) =>
+    msgs.some(m => m.chatId === chatId && m.sender === 'user'), [messages]);
+
+  const handleNewChat = (uo = null, opts = {}) => {
+    if (!opts.silent) playChime();
     const u = uo || currentUser;
     const existingIds = history.map(h => h.id).filter(id => typeof id === 'number');
     const ni = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
-    const greetingMsg = { id: Date.now() + Math.random(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}! NEW CHAT SESSION READY.` };
-    
-    const updatedHistory = [{ id: ni, user: u, title: `SESSION #${ni}` }, ...history];
-    const updatedMessages = [...messages.filter(m => m.chatId !== ni), greetingMsg];
-    
+    const greetingMsg = { id: newLocalId(), chatId: ni, user: u, sender: 'bmo', type: 'text', text: `GREETINGS ${u.toUpperCase()}! NEW CHAT SESSION READY.` };
+
+    // Drop any unkept, never-used sessions rather than letting them pile up.
+    const pruned = history.filter(h => h.kept || sessionHasContent(h.id) || h.id === activeChatId);
+    const prunedIds = new Set(pruned.map(h => h.id));
+    const carriedMessages = messages.filter(m => prunedIds.has(m.chatId) && m.chatId !== ni);
+
+    const updatedHistory = [{ id: ni, user: u, title: 'NEW SESSION', kept: false }, ...pruned];
+    const updatedMessages = [...carriedMessages, greetingMsg];
+
     setHistory(updatedHistory);
     setActiveChatId(ni);
     setMessages(updatedMessages);
@@ -770,9 +815,68 @@ export default function App() {
     if (!activeChatId) return;
     playGlitch();
     const updatedMsgs = messages.filter(m => m.chatId !== activeChatId);
+    // Clearing wipes the conversation, so the generated title no longer describes
+    // anything — reset it rather than leaving a stale name on an empty session.
+    const updatedHistory = history.map(h =>
+      h.id === activeChatId ? { ...h, title: 'NEW SESSION' } : h);
     setMessages(updatedMsgs);
+    setHistory(updatedHistory);
     setIsMenuOpen(false);
-    saveServerHistory(history, updatedMsgs);
+    saveServerHistory(updatedHistory, updatedMsgs);
+  };
+
+  // Ask BMO to name the session once, after the first real exchange. Fire-and-forget:
+  // a slow or failed naming call must never delay or break the chat itself.
+  const namingRef = useRef(new Set());
+  const maybeNameSession = (msgs) => {
+    const chatId = activeChatId;
+    const entry = history.find(h => h.id === chatId);
+    if (!entry || (entry.title && entry.title !== 'NEW SESSION')) return;
+    if (namingRef.current.has(chatId)) return;
+    const convo = msgs.filter(m => m.chatId === chatId && m.text);
+    if (convo.filter(m => m.sender === 'user').length < 1) return;
+    namingRef.current.add(chatId);
+
+    (async () => {
+      try {
+        const res = await fetch(`${getApiUrl()}/v1/chat/title`, {
+          method: 'POST',
+          headers: { "Authorization": `Bearer ${getApiToken()}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: convo.map(m => ({ sender: m.sender, text: m.text })) }),
+        });
+        if (!res.ok) return;
+        const { title } = await res.json();
+        if (!title) return;
+        setHistory(prev => {
+          const updated = prev.map(h => h.id === chatId ? { ...h, title: title.toUpperCase() } : h);
+          saveServerHistory(updated, msgs);
+          return updated;
+        });
+      } catch {
+        namingRef.current.delete(chatId); // let a later message retry
+      }
+    })();
+  };
+
+  const handleToggleKeep = (chatId) => {
+    playClick();
+    const updated = history.map(h => h.id === chatId ? { ...h, kept: !h.kept } : h);
+    setHistory(updated);
+    saveServerHistory(updated, messages);
+  };
+
+  const handleDeleteChat = (chatId) => {
+    playGlitch();
+    const updatedHistory = history.filter(h => h.id !== chatId);
+    const updatedMessages = messages.filter(m => m.chatId !== chatId);
+    setHistory(updatedHistory);
+    setMessages(updatedMessages);
+    if (chatId === activeChatId) {
+      const next = updatedHistory.find(h => h.user === currentUser);
+      if (next) setActiveChatId(next.id);
+      else { saveServerHistory(updatedHistory, updatedMessages); handleNewChat(null, { silent: true }); return; }
+    }
+    saveServerHistory(updatedHistory, updatedMessages);
   };
 
   const handleSend = async () => {
@@ -897,8 +1001,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/purity -- same handleSend event-handler context as above
     const bmi = Date.now() + Math.random();
     const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText, thinking: thinkingText || undefined };
-    setMessages(prev => [...prev, bmsg]);
-    
+    setMessages(prev => {
+      const next = [...prev, bmsg];
+      // Persist after every exchange. This used to only run on new/clear chat, so the
+      // server's copy froze at whatever the state was then and everything since lived
+      // only in this browser's localStorage — that's why sessions "didn't persist".
+      saveServerHistory(history, next);
+      maybeNameSession(next);
+      return next;
+    });
+
     if (autoSpeak && !parseToolCall(cleanText)) {
       const speech = cleanTextForTts(cleanText);
       if (speech) {
@@ -1164,10 +1276,26 @@ export default function App() {
 
                       {isAuthenticated && (
                         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-                          <button type="button" onClick={() => handleNewChat()} className="w-full p-3 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[2px_2px_0_#2d482e] flex items-center justify-center gap-2 mb-1 font-bold text-xs bmo-btn-tactile"><Plus size={16} /> NEW CHAT</button>
-                          <button type="button" onClick={() => handleClearActiveChat()} className="w-full p-2 bg-[#ffcc00] text-[#2d482e] border-2 border-[#2d482e] rounded shadow-[1px_1px_0_black] flex items-center justify-center gap-2 mb-2 text-[8px] font-bold uppercase bmo-btn-tactile"><Trash2 size={12} /> CLEAR SCREEN BUFFER</button>
+                          <div className="flex gap-1 mb-2">
+                            <button type="button" onClick={() => handleNewChat()} className="flex-1 p-2 bg-[#ff3b30] text-white border-2 border-[#2d482e] rounded shadow-[1px_1px_0_black] flex items-center justify-center gap-1 font-bold text-[8px] uppercase bmo-btn-tactile"><Plus size={12} /> NEW</button>
+                            <button type="button" onClick={() => handleClearActiveChat()} className="flex-1 p-2 bg-[#ffcc00] text-[#2d482e] border-2 border-[#2d482e] rounded shadow-[1px_1px_0_black] flex items-center justify-center gap-1 text-[8px] font-bold uppercase bmo-btn-tactile"><Trash2 size={12} /> CLEAR</button>
+                          </div>
+                          <div className="text-[7px] text-white/70 uppercase tracking-widest mb-1 px-0.5">
+                            Sessions — ☆ keeps one past restart
+                          </div>
                           {activeHistory.map(chat => (
-                            <button key={chat.id} type="button" onClick={() => { playClick(); setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`p-3 border-2 border-[#2d482e] rounded text-left truncate text-[8px] sm:text-[10px] shadow-[1px_1px_0_black] bmo-btn-tactile ${activeChatId === chat.id ? 'bg-[#9fc28e] font-bold' : 'bg-[#cbe3c0]'}`}>{'>'} {chat.title}</button>
+                            <div key={chat.id} className={`flex items-stretch gap-1 mb-1 border-2 border-[#2d482e] rounded overflow-hidden shadow-[1px_1px_0_black] ${activeChatId === chat.id ? 'bg-[#9fc28e]' : 'bg-[#cbe3c0]'}`}>
+                              <button type="button" onClick={() => { playClick(); setActiveChatId(chat.id); setIsMenuOpen(false); }} className={`flex-1 p-2 text-left truncate text-[8px] sm:text-[10px] bmo-btn-tactile ${activeChatId === chat.id ? 'font-bold' : ''}`}>
+                                {'>'} {chat.title}
+                              </button>
+                              {/* Keep = survives the auto-prune that clears unused sessions on launch. */}
+                              <button type="button" title={chat.kept ? 'Kept — tap to unkeep' : 'Keep this session'} onClick={() => handleToggleKeep(chat.id)} className={`px-2 border-l-2 border-[#2d482e] text-[10px] ${chat.kept ? 'bg-[#ffcc00] text-[#2d482e]' : 'text-[#2d482e]/40'}`}>
+                                {chat.kept ? '★' : '☆'}
+                              </button>
+                              <button type="button" title="Delete session" onClick={() => handleDeleteChat(chat.id)} className="px-2 border-l-2 border-[#2d482e] text-[#ff3b30] font-bold text-[10px]">
+                                ✕
+                              </button>
+                            </div>
                           ))}
                         </div>
                       )}

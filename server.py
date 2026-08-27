@@ -1386,6 +1386,67 @@ class HistoryPayload(BaseModel):
     chats: Optional[List[dict]] = []
     messages: Optional[List[dict]] = []
 
+class TitleRequest(BaseModel):
+    messages: list = []
+
+@app.post("/v1/chat/title")
+async def name_chat(payload: TitleRequest, token: str = Depends(get_token)):
+    """Name a chat session from its opening exchange, so the session list shows
+    something recognizable instead of 'SESSION #3'.
+
+    Prefers Gemini when a key is set — it answers in ~1s, where the local 9B model
+    takes 20s+ on CPU and that latency would be user-visible. Falls back to local,
+    then to a truncated first message, so this never blocks or fails a chat."""
+    snippet = "\n".join(
+        f"{m.get('sender', 'user')}: {str(m.get('text', ''))[:200]}"
+        for m in payload.messages[:6] if m.get("text")
+    )[:1200]
+    first_user = next((str(m.get("text", "")) for m in payload.messages
+                       if m.get("sender") == "user" and m.get("text")), "")
+    fallback = (first_user[:38].strip() or "New session")
+
+    if not snippet:
+        return {"title": fallback}
+
+    prompt = ("Give a 2-5 word title for this chat. Reply with ONLY the title — no "
+              "quotes, no punctuation at the end, no preamble.\n\n" + snippet)
+
+    def clean(raw: str) -> str:
+        t = (raw or "").strip().strip('"\'').splitlines()[0].strip()
+        # Small models like to answer with "Title: X" or add trailing periods.
+        if ":" in t[:12]:
+            t = t.split(":", 1)[1].strip()
+        return t[:40].rstrip(".").strip()
+
+    if GEMINI_API_KEY:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+            if r.is_success:
+                parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                title = clean(" ".join(p.get("text", "") for p in parts if p.get("text")))
+                if title:
+                    return {"title": title}
+        except Exception as e:
+            print(f"[TITLE] Gemini failed, falling back to local: {e}", flush=True)
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json={
+                "model": get_available_model(),
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 20,
+            })
+        if r.is_success:
+            title = clean(r.json().get("choices", [{}])[0].get("message", {}).get("content", ""))
+            if title:
+                return {"title": title}
+    except Exception as e:
+        print(f"[TITLE] local model failed: {e}", flush=True)
+
+    return {"title": fallback}
+
 @app.get("/v1/chat/history")
 async def get_hist(token: str = Depends(get_token)):
     if os.path.exists("history.json"):
