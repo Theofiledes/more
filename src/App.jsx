@@ -713,7 +713,14 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         const serverChats = data.chats || [];
-        const serverMsgs = (messages.length === 0) ? (data.messages || []) : messages;
+        // Union of both stores, deduped by message id. Preferring one wholesale gets the
+        // prune wrong: taking local-only discarded a session the server knew was used
+        // (it vanished from the list), while taking server-only would drop anything this
+        // device sent that hadn't been persisted yet.
+        const byId = new Map();
+        for (const m of (data.messages || [])) byId.set(m.id, m);
+        for (const m of messages) byId.set(m.id, m);
+        const serverMsgs = [...byId.values()];
 
         // Every launch starts a fresh session, and any previous session that was never
         // kept and never actually used gets dropped here rather than accumulating as
@@ -888,10 +895,7 @@ export default function App() {
     playBeep();
     isSendingRef.current = true;
     const ci = inputText; const cim = pendingImageUrl; const cf = pendingFile;
-    // handleSend only runs from a user action (button/Enter), never during render;
-    // Date.now()+Math.random() here is a cheap unique message id, not a render-phase read.
-    // eslint-disable-next-line react-hooks/purity
-    let nm = { id: Date.now() + Math.random(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
+    let nm = { id: newLocalId(), chatId: activeChatId, user: currentUser, sender: 'user', text: ci, type: 'text' };
     if (cim) { 
       nm.type = 'image'; nm.imageUrl = cim; nm.text = ci; 
     } else if (cf) { 
@@ -998,8 +1002,7 @@ export default function App() {
     }
 
     setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
-    // eslint-disable-next-line react-hooks/purity -- same handleSend event-handler context as above
-    const bmi = Date.now() + Math.random();
+    const bmi = newLocalId();
     const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText, thinking: thinkingText || undefined };
     setMessages(prev => {
       const next = [...prev, bmsg];
