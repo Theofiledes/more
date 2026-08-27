@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Brain, Cloud, MessageSquare, Zap, Check } from 'lucide-react';
+import { Brain, Cloud, MessageSquare, Zap, Check, Layers, Undo2 } from 'lucide-react';
 import { getApiUrl, getApiToken } from '../utils/api';
 import { playClick, playChime } from '../utils/soundEffects';
 
@@ -14,6 +14,8 @@ const AutonomyPanel = () => {
   const [data, setData] = useState(null);
   const [dream, setDream] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [memo, setMemo] = useState(null);
+  const [showFacts, setShowFacts] = useState(false);
 
   const authFetch = useCallback((path, opts = {}) =>
     fetch(`${getApiUrl()}${path}`, {
@@ -27,12 +29,14 @@ const AutonomyPanel = () => {
 
   const refresh = useCallback(async () => {
     try {
-      const [a, d] = await Promise.all([
+      const [a, d, m] = await Promise.all([
         authFetch('/v1/autonomy').then(r => r.ok ? r.json() : null),
         authFetch('/v1/dream/status').then(r => r.ok ? r.json() : null),
+        authFetch('/v1/memory').then(r => r.ok ? r.json() : null),
       ]);
       if (a) setData(a);
       if (d) setDream(d);
+      if (m) setMemo(m);
     } catch { /* offline — panel just shows stale values */ }
   }, [authFetch]);
 
@@ -58,6 +62,28 @@ const AutonomyPanel = () => {
     try {
       await authFetch('/v1/dream/now', { method: 'POST' });
     } finally { setBusy(false); refresh(); }
+  };
+
+  const consolidate = async () => {
+    playChime();
+    setBusy(true);
+    try {
+      const res = await authFetch('/v1/memory/consolidate?force=true', { method: 'POST' });
+      const out = await res.json();
+      if (out.status === 'rejected') {
+        // The server refuses implausible merges rather than wrecking memory — say so
+        // instead of silently appearing to do nothing.
+        window.alert(`Consolidation rejected: ${out.reason}. Memory left untouched.`);
+      }
+    } finally { setBusy(false); refresh(); }
+  };
+
+  const restoreMemory = async () => {
+    if (!window.confirm('Undo the last consolidation and restore the previous facts?')) return;
+    playClick();
+    setBusy(true);
+    try { await authFetch('/v1/memory/restore', { method: 'POST' }); }
+    finally { setBusy(false); refresh(); }
   };
 
   const approveEscalation = async () => {
@@ -189,6 +215,53 @@ const AutonomyPanel = () => {
           className="w-full"
         />
       </div>
+
+      {/* Memory: what BMO knows, and tidying it */}
+      {memo && (
+        <div className="flex flex-col gap-1">
+          <div className="flex justify-between items-center text-[8px] font-bold">
+            <span className="flex items-center gap-1"><Layers size={10} /> STORED MEMORY</span>
+            <span className="bg-[#2d482e] text-[#b5d6a7] px-2 py-0.5 rounded font-mono text-[7px]">
+              {memo.count} FACTS
+            </span>
+          </div>
+          <div className="text-[6px] opacity-60">
+            Merges into fewer, denser facts automatically past {memo.consolidate_at}.
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button" disabled={busy || memo.count < 2} onClick={consolidate}
+              className="flex-1 py-1.5 bg-[#7ba068] text-white border-2 border-[#2d482e] rounded text-[7px] font-bold uppercase disabled:opacity-50"
+            >
+              CONSOLIDATE NOW
+            </button>
+            <button
+              type="button" disabled={busy} onClick={restoreMemory} title="Undo the last consolidation"
+              className="px-2 py-1.5 bg-[#ffcc00] text-[#2d482e] border-2 border-[#2d482e] rounded text-[7px] font-bold uppercase disabled:opacity-50"
+            >
+              <Undo2 size={10} />
+            </button>
+          </div>
+          <button
+            type="button" onClick={() => { playClick(); setShowFacts(v => !v); }}
+            className="text-[6px] opacity-70 uppercase tracking-widest text-left mt-0.5"
+          >
+            {showFacts ? '▾ hide' : '▸ show'} what BMO remembers
+          </button>
+          {showFacts && (
+            <div className="max-h-40 overflow-y-auto bg-[#9fc28e] border-2 border-[#2d482e] rounded p-1.5 flex flex-col gap-1">
+              {memo.facts.length === 0 && (
+                <div className="text-[7px] opacity-60 italic">Nothing learned yet.</div>
+              )}
+              {memo.facts.map(f => (
+                <div key={f.id} className="text-[7px] text-[#2d482e] leading-snug border-b border-[#2d482e]/10 pb-1 last:border-0">
+                  {f.content}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Dream state + manual trigger */}
       {dream && (

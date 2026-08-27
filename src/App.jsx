@@ -769,6 +769,42 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per launch, not on every history/message change
   }, [isAuthenticated, needsPairing]);
 
+  // BMO's learning is invisible unless it says something. Poll the queue rather than
+  // pushing over the socket so notes only ever appear between turns — a note arriving
+  // mid-reply would read as BMO interrupting itself.
+  useEffect(() => {
+    if (!isAuthenticated || needsPairing) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (isLoading || isSendingRef.current) return;   // never land mid-reply
+      try {
+        const res = await fetch(`${getApiUrl()}/v1/proactive`, {
+          headers: { "Authorization": `Bearer ${getApiToken()}` },
+        });
+        if (!res.ok) return;
+        const { notes } = await res.json();
+        if (cancelled || !notes?.length) return;
+        for (const n of notes) {
+          setMessages(prev => prev.some(m => m.proactiveId === n.id) ? prev : [...prev, {
+            id: newLocalId(),
+            chatId: activeChatId,
+            user: currentUser,
+            sender: 'bmo',
+            type: 'text',
+            proactiveId: n.id,
+            text: `[face:thinking] ${n.text}`,
+          }]);
+          fetch(`${getApiUrl()}/v1/proactive/dismiss/${n.id}`, {
+            method: 'POST',
+            headers: { "Authorization": `Bearer ${getApiToken()}` },
+          }).catch(() => {});
+        }
+      } catch { /* offline; try again next tick */ }
+    };
+    const t = setInterval(poll, 20000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [isAuthenticated, needsPairing, isLoading, activeChatId, currentUser]);
+
   const handleAuth = async (e) => {
     if (e) { e.preventDefault(); e.stopPropagation(); }
     if (pinInput !== USERS[currentUser].pin) {
