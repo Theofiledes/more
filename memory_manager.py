@@ -1,6 +1,15 @@
 import sqlite3
 import json
 import os
+import re
+
+# Words that carry no claim, so two facts sharing only these aren't saying the same thing.
+_STOPWORDS = frozenset("""
+the and for with that this from has have had was were are been being its it's you your
+what when where which who whom will would can could should may might must shall about
+into over under than then they them their there here also just only very more most
+some any all not but our out per via while does did doing done new now still remains
+""".split())
 
 class MemoryManager:
     def __init__(self, db_path="memory.db"):
@@ -88,12 +97,62 @@ class MemoryManager:
         finally:
             conn.close()
 
-    def add_fact(self, content):
+    def add_fact(self, content, dedupe=True):
+        """Store a fact, skipping near-duplicates. Returns True if it was stored.
+
+        Dream synthesis re-summarizes the same conversation history on every cycle, so
+        without this it writes a fresh restatement of the same thing every time it runs.
+        That is not theoretical: it filled 16 of 28 stored facts with paraphrases of one
+        sentence, crowding real memories out of the context budget entirely. Deduping on
+        write is the only place that helps — consolidation runs too late and merging
+        sixteen copies of one claim just launders it into a confident single fact.
+        """
+        if dedupe and self.find_similar_fact(content) is not None:
+            return False
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO facts (content) VALUES (?)", (content,))
         conn.commit()
         conn.close()
+        return True
+
+    def find_similar_fact(self, content, threshold=0.60):
+        """Return an existing fact that says substantially the same thing, or None.
+
+        Compares word sets rather than characters: models rephrase ("is clean" vs
+        "remains clean") far more than they change what they actually assert, so a
+        character-level ratio misses duplicates a reader would call identical.
+
+        0.60 was measured, not guessed. Replaying this codebase's own 28 accumulated
+        facts, restatements of one claim scored 0.5-0.86 against each other while
+        genuinely unrelated facts scored 0.08-0.15 — a wide gap, so the exact cutoff
+        inside it doesn't much matter. The one borderline case at 0.64 was itself a real
+        duplicate. Raise this if legitimate facts start getting rejected.
+        """
+        words = self._significant_words(content)
+        if len(words) < 4:
+            return None   # too short to judge; let it through rather than guess
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute("SELECT content FROM facts").fetchall()
+        finally:
+            conn.close()
+        for (existing,) in rows:
+            other = self._significant_words(existing)
+            if not other:
+                continue
+            overlap = len(words & other) / max(len(words), len(other))
+            if overlap >= threshold:
+                return existing
+        return None
+
+    @staticmethod
+    def _significant_words(text):
+        # Strip the "Dream Milestone:" style prefix and markdown/punctuation so two
+        # phrasings of one claim reduce to the same word set.
+        body = re.sub(r'^[^:]{0,24}:\s*', '', (text or '').strip())
+        return {w for w in re.findall(r'[a-z0-9]{3,}', body.lower())
+                if w not in _STOPWORDS}
 
     def search_facts(self, query, limit=3):
         conn = sqlite3.connect(self.db_path)

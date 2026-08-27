@@ -755,7 +755,19 @@ async def perform_dream_synthesis():
     summary = tidy_summary(summary)
     if summary:
         fact = f"Dream Milestone: {summary}"
-        memory_manager.add_fact(fact)
+        # Every cycle re-summarizes largely the same history, so most dreams restate what
+        # BMO already knows. When add_fact rejects it as a duplicate, stay quiet entirely:
+        # writing it to MEMORY.md or announcing it as a discovery would put BMO in the
+        # position of excitedly reporting the same thing it reported an hour ago.
+        is_new = memory_manager.add_fact(fact)
+        if not is_new:
+            # The dream itself succeeded — it just didn't find anything BMO didn't already
+            # know, which is the normal case once a conversation stops changing. Still a
+            # "done" dream, so keep returning the summary; only skip the side effects that
+            # would have BMO excitedly re-announce an hour-old discovery.
+            await broadcast_to_managers(
+                "[90m[DREAM SYNTHESIS] Nothing new — restates an existing memory.[0m")
+            return summary
         memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
         # Proactive note: BMO's learning is otherwise completely invisible. "note" lets it
         # say what it picked up; "full" additionally lets it follow up. Queued rather than
