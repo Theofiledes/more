@@ -273,10 +273,19 @@ runtime_state = {
     #   note — may leave one short note about what it learned
     #   full — may also ask questions / suggest next steps
     "proactive_mode": os.getenv("BMO_PROACTIVE_MODE", "note"),
+    # How many learned facts get injected into every prompt. Each is only ~30 tokens —
+    # SOUL.md alone costs ~960, so this is a much smaller context lever than it looks.
+    # The real risk of a high number isn't size, it's dilution: stale facts crowding out
+    # useful ones, which is what consolidation is for.
+    "memory_facts": int(os.getenv("BMO_MEMORY_FACTS", "20")),
 }
 
 # Escalation accounting — reset daily, exposed so the UI can show what's left.
 escalation_log = {"date": None, "used": 0, "entries": [], "pending": None}
+
+# Notes BMO wants to volunteer. Queued rather than injected into the chat: the client
+# decides when (and whether) to surface them, so BMO can't interrupt mid-conversation.
+proactive_queue = []
 
 def _escalation_today():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -508,6 +517,18 @@ async def perform_dream_synthesis():
         fact = f"Dream Milestone: {summary}"
         memory_manager.add_fact(fact)
         memory_manager.save_workspace_file("MEMORY.md", f"\n- {fact}", append=True)
+        # Proactive note: BMO's learning is otherwise completely invisible. "note" lets it
+        # say what it picked up; "full" additionally lets it follow up. Queued rather than
+        # pushed into the chat directly so the client decides when to surface it.
+        if runtime_state["proactive_mode"] in ("note", "full"):
+            proactive_queue.append({
+                "id": int(time.time() * 1000),
+                "at": datetime.now().strftime("%H:%M"),
+                "kind": "note",
+                "text": summary,
+                "followup": runtime_state["proactive_mode"] == "full",
+            })
+            del proactive_queue[:-10]  # only the last few matter
         await broadcast_to_managers(f"\u001b[32m[DREAM SYNTHESIS] New Memory Formed: '{summary}'\u001b[0m")
         return summary
 
@@ -720,6 +741,7 @@ class AutonomySettings(BaseModel):
     escalation_mode: str | None = None     # off | ask | auto
     escalation_budget: int | None = None
     proactive_mode: str | None = None      # off | note | full
+    memory_facts: int | None = None        # how many learned facts enter the prompt
 
 @app.get("/v1/autonomy")
 async def get_autonomy(token: str = Depends(get_token)):
@@ -731,6 +753,8 @@ async def get_autonomy(token: str = Depends(get_token)):
         "escalation_log": log["entries"][-10:],
         "escalation_pending": log["pending"],
         "proactive_mode": runtime_state["proactive_mode"],
+        "memory_facts": runtime_state["memory_facts"],
+        "memory_facts_available": memory_manager.count_facts(),
         "last_triage": dream_state.get("last_triage"),
         "cloud_available": bool(GEMINI_API_KEY),
     }
@@ -743,7 +767,21 @@ async def set_autonomy(payload: AutonomySettings, token: str = Depends(get_token
         runtime_state["escalation_budget"] = payload.escalation_budget
     if payload.proactive_mode in ("off", "note", "full"):
         runtime_state["proactive_mode"] = payload.proactive_mode
+    if payload.memory_facts is not None and 0 <= payload.memory_facts <= 200:
+        runtime_state["memory_facts"] = payload.memory_facts
     return await get_autonomy(token)
+
+@app.get("/v1/proactive")
+async def get_proactive(token: str = Depends(get_token)):
+    """Notes BMO wants to volunteer. Polled by the client, which decides when to show
+    them — that's what keeps 'proactive' from meaning 'interrupts you mid-sentence'."""
+    return {"notes": proactive_queue, "mode": runtime_state["proactive_mode"]}
+
+@app.post("/v1/proactive/dismiss/{note_id}")
+async def dismiss_proactive(note_id: int, token: str = Depends(get_token)):
+    before = len(proactive_queue)
+    proactive_queue[:] = [n for n in proactive_queue if n["id"] != note_id]
+    return {"status": "ok", "removed": before - len(proactive_queue)}
 
 @app.post("/v1/autonomy/approve-escalation")
 async def approve_escalation(token: str = Depends(get_token)):
@@ -1112,7 +1150,7 @@ def substitute_placeholders(text: str) -> str:
 def build_system_prompt():
     soul = substitute_placeholders(memory_manager.get_workspace_file("SOUL.md") or "You are BMO.")
     agents = substitute_placeholders(memory_manager.get_workspace_file("AGENTS.md") or "")
-    facts = memory_manager.get_recent_facts_summary(limit=5)
+    facts = memory_manager.get_recent_facts_summary(limit=runtime_state["memory_facts"])
     now_str = datetime.now().astimezone().strftime("%A, %B %d, %Y — %I:%M %p %Z")
     return f"{soul}\n\n### CURRENT DATE & TIME:\n{now_str}\n\n### BMO MICRO-AGENTS & SUB-ROUTINE PLAYBOOKS:\n{agents}\n\n### RECENT MEMORY FACTS:\n{facts}"
 

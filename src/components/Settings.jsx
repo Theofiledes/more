@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, ChevronDown, RefreshCw, Link, Volume2, VolumeX, Sliders, Volume1, Activity, Copy, Check, Radio, Play, Keyboard, Sparkles } from 'lucide-react';
 import { playClick, playChime, playGlitch } from '../utils/soundEffects';
+import AutonomyPanel from './AutonomyPanel';
 
 export const APP_VERSION = "v7.2.0";
 
@@ -348,6 +349,8 @@ Timestamp: ${new Date().toISOString()}`;
           </button>
         </div>
       </div>
+
+      <AutonomyPanel />
 
       {/* SYSTEM DIAGNOSTICS */}
       <div className="border-t-2 border-[#2d482e] pt-3 flex flex-col gap-2">

@@ -66,7 +66,13 @@ class MemoryManager:
         with open(clean_path, mode, encoding="utf-8") as f: f.write(content)
         return True
 
-    def get_recent_facts_summary(self, limit=5):
+    def count_facts(self):
+        conn = sqlite3.connect(self.db_path)
+        n = conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+        conn.close()
+        return n
+
+    def get_recent_facts_summary(self, limit=20):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT content FROM facts ORDER BY id DESC LIMIT ?", (limit,))
