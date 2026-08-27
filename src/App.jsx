@@ -20,8 +20,11 @@ const MICRO_AGENTS_LIST = [
   { tag: '@aider_architect', name: 'Aider Refactor', desc: 'Multi-file code editing via Aider CLI' },
   { tag: '@android_debugger', name: 'Android Debugger', desc: 'Crash logcat & stacktrace patcher' },
   { tag: '@ui_polisher', name: 'UI Polisher', desc: 'CSS transitions & micro-animations' },
-  { tag: '@code_auditor', name: 'Code Auditor', desc: 'Git diff & security path auditor' },
-  { tag: '@dream_synthesizer', name: 'Dream Synthesizer', desc: 'Memory distillation & milestone logging' }
+  { tag: '@code_auditor', name: 'Code Auditor', desc: 'Git diff & security path auditor' }
+  // @dream_synthesizer intentionally omitted: invoking it as a micro-agent only ran a
+  // generic "distill memory" prompt, it never called perform_dream_synthesis(). The real
+  // thing runs on its own timer and on "goodnight", so a manual entry that looked like it
+  // did the same job but didn't was worse than no entry.
 ];
 
 // --- Native TTS Hook ---

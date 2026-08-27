@@ -1137,7 +1137,7 @@ async def chat(request: Request, token: str = Depends(get_token)):
 
         # Sanitize only freestanding un-executed JSON tool blocks (not mixed into prose)
         if response_text:
-            sanitized = re.sub(r'```(?:json)?\s*\{\s*"tool"[^`]*?\}\s*```', '', response_text, flags=re.DOTALL).strip()
+            sanitized = strip_model_tool_artifacts(response_text)
             # Only strip bare JSON blocks if they are the ONLY content
             if sanitized != response_text:
                 response_text = sanitized if sanitized else response_text
@@ -1190,6 +1190,22 @@ async def chat(request: Request, token: str = Depends(get_token)):
 # ============================================================================
 
 FACE_TAG_RE = re.compile(r'\[face:\s*([a-zA-Z0-9_-]+)\]', re.I)
+
+# A model must never be able to fake a tool result in user-visible text. Small models
+# imitate the [TOOL EXECUTION RESULT] framing they've seen in their own context and
+# emit an invented block — observed live: a fabricated weather payload presented as
+# real data. Only the executor produces genuine results; anything the model writes
+# with these markers is fiction, so cut from the marker onward.
+FAKE_TOOL_RESULT_RE = re.compile(
+    r'\[\s*TOOL[ _]EXECUTION[ _](?:RESULT|SUMMARY)\s*\].*', re.I | re.S)
+
+def strip_model_tool_artifacts(text: str) -> str:
+    """Remove un-executed tool-call JSON and any self-invented tool-result blocks."""
+    if not text:
+        return text
+    cleaned = re.sub(r'```(?:json)?\s*\{\s*"tool"[^`]*?\}\s*```', '', text, flags=re.DOTALL)
+    cleaned = FAKE_TOOL_RESULT_RE.sub('', cleaned)
+    return cleaned.strip()
 LATE_GATE_RE = re.compile(r'\{\s*"tool')
 STREAM_HEAD_HOLD = 40
 
@@ -1351,7 +1367,7 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
                         yield sse(evt)
                 turn_count += 1
 
-            sanitized = re.sub(r'```(?:json)?\s*\{\s*"tool"[^`]*?\}\s*```', '', response_text, flags=re.DOTALL).strip()
+            sanitized = strip_model_tool_artifacts(response_text)
             final_text = FACE_TAG_RE.sub("", sanitized if sanitized else response_text, count=1).strip()
             yield sse({"type": "done", "text": final_text, "model": target_model})
         except Exception as e:
