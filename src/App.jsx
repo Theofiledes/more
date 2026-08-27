@@ -785,6 +785,11 @@ export default function App() {
         const { notes } = await res.json();
         if (cancelled || !notes?.length) return;
         for (const n of notes) {
+          // Strip any face tag the model emitted and use it to set the expression —
+          // streamed replies get this done server-side, but a queued note bypasses
+          // that path, so an unparsed "[face:thinking]" was rendering as literal text.
+          const { emotion, cleanText } = parseBmoEmotion(n.text);
+          if (emotion && EMOTION_MAP[emotion]) setActiveEmotion(emotion);
           setMessages(prev => prev.some(m => m.proactiveId === n.id) ? prev : [...prev, {
             id: newLocalId(),
             chatId: activeChatId,
@@ -792,7 +797,7 @@ export default function App() {
             sender: 'bmo',
             type: 'text',
             proactiveId: n.id,
-            text: `[face:thinking] ${n.text}`,
+            text: cleanText || n.text,
           }]);
           fetch(`${getApiUrl()}/v1/proactive/dismiss/${n.id}`, {
             method: 'POST',
