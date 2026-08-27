@@ -197,8 +197,8 @@ BMO is designed for a private network, not the public internet.
                                        |
      +-----------------+---------------+-----------------+-----------------+
      |                 |               |                 |                 |
-[@android_debugger] [@ui_polisher] [@code_auditor] [@dream_synthesizer] [Shell Exec]
-(Crash Analyzer)    (CSS/JSX Polish) (Git/Path Audit) (Memory Distill)   (Bash Tool)
+     [@code_auditor]      [@aider_architect]     [@example_agent]     [Shell Exec]
+     (Git/Path Audit)     (Multi-file edits)     (Your template)      (Bash Tool)
      |                 |               |                 |                 |
      +-----------------+---------------+-----------------+-----------------+
                                        |
@@ -224,7 +224,7 @@ flowchart TD
         B[📸 Image Upload]
         C[📼 File Cartridge]
         D[🌦️ Weather/Search Request]
-        E[🌙 Bedtime Intent "goodnight"]
+        E["🌙 Bedtime Intent (goodnight)"]
     end
 
     subgraph Pipeline ["⚙️ Data Ingestion & Scratch Storage"]
@@ -244,15 +244,13 @@ flowchart TD
     end
 
     subgraph SubRoutines ["🤖 Micro-Agent Engine (AGENTS.md)"]
-        L1 --> AG1["@android_debugger (Logcat Crash Analyzer)"]
-        L1 --> AG2["@ui_polisher (UI/CSS Enhancements)"]
-        L1 --> AG3["@code_auditor (Security & Git Diff Audit)"]
-        L1 --> AG4["@dream_synthesizer (Memory Distillation)"]
+        L1 --> AG1["@code_auditor - git diff & safety review"]
+        L1 --> AG2["@aider_architect - multi-file edits (optional)"]
+        L1 --> AG3["@example_agent - template to fork"]
     end
 
     subgraph MemoryPersistence ["💾 Persistence & Bedtime Sleep Mode"]
         E --> DS[🌌 Gemini Cloud Dream Synthesis]
-        AG4 --> DS
         DS -->|Update Facts| DB[(SQLite memory.db)]
         DS -->|Append Milestones| MD[📄 MEMORY.md]
     end
@@ -272,6 +270,10 @@ flowchart TD
 - **Vision**: Image uploads analyzed by a local `moondream` model.
 - **Live Internet Tools**: Built-in weather (`/v1/tools/weather`) and web search (`/v1/tools/search`).
 - **Autonomous Tool Engine**: Shell command execution, workspace file editing, and git status tracking.
+- **Search**: Wikipedia lookups plus web search (DuckDuckGo free, or Brave with a key).
+- **Micro-agents**: One working agent (`@code_auditor`), an optional Aider integration, and
+  a template to fork — see [AGENTS.md](AGENTS.md).
+- **Notifications**: BMO can notify you when it learns something or needs your approval.
 - **Guardian Protocol**: Gate shell commands behind manual approval, with a diff/approve UI.
 - **Interactive Tool Badges**: Execution traces, terminal output logs, and diff approvals in-feed.
 - **Live Telemetry**: CPU / RAM / disk, active task, and a real context-window gauge over a websocket.
@@ -302,6 +304,19 @@ alias wake-bmo='/path/to/bmoapp/wake-bmo.sh'
 alias stop-bmo='pkill -f "uvicorn server:app"'
 alias bmo-status='pgrep -fl "uvicorn server:app"'
 ```
+
+---
+
+## 🔔 Notifications
+
+BMO uses **local notifications**, not push. Real push would mean every self-hoster
+registering a Firebase project and routing their private conversation through Google's
+servers to reach their own phone — which defeats the point of running BMO on your own
+hardware.
+
+The tradeoff, stated plainly: notifications fire while BMO is running, foreground or
+backgrounded. If Android kills the process, nothing arrives until you reopen the app.
+You'll be asked for permission once, after your first login.
 
 ---
 

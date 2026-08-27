@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- BMO's teal shell. Android 8+ composites this behind ic_launcher_foreground for
+         the adaptive icon, so the launcher ignores ic_launcher.png entirely — leaving
+         this at Capacitor's default #FFFFFF is why the icon still looked stock. -->
+    <color name="ic_launcher_background">#5FD3BC</color>
 </resources>

@@ -5,6 +5,7 @@ import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
 import Settings, { APP_VERSION } from './components/Settings';
 import PairingScreen from './components/PairingScreen';
+import { notify, appIsBackgrounded, ensureNotificationPermission } from './utils/notifications';
 import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import OnboardingModal from './components/OnboardingModal';
@@ -17,14 +18,13 @@ import { getApiUrl, getApiToken } from './utils/api';
 import { connectBmoSocket, disconnectBmoSocket, subscribeBmoSocket } from './utils/bmoSocket';
 
 const MICRO_AGENTS_LIST = [
-  { tag: '@aider_architect', name: 'Aider Refactor', desc: 'Multi-file code editing via Aider CLI' },
-  { tag: '@android_debugger', name: 'Android Debugger', desc: 'Crash logcat & stacktrace patcher' },
-  { tag: '@ui_polisher', name: 'UI Polisher', desc: 'CSS transitions & micro-animations' },
-  { tag: '@code_auditor', name: 'Code Auditor', desc: 'Git diff & security path auditor' }
-  // @dream_synthesizer intentionally omitted: invoking it as a micro-agent only ran a
-  // generic "distill memory" prompt, it never called perform_dream_synthesis(). The real
-  // thing runs on its own timer and on "goodnight", so a manual entry that looked like it
-  // did the same job but didn't was worse than no entry.
+  { tag: '@code_auditor', name: 'Code Auditor', desc: 'Reviews your git diff for bugs & safety' },
+  { tag: '@aider_architect', name: 'Aider Refactor', desc: 'Multi-file code editing (needs Aider installed)' },
+  { tag: '@example_agent', name: 'Example Agent', desc: 'Template — copy it to build your own' }
+  // Trimmed from five. @android_debugger and @ui_polisher were prompt wrappers that
+  // renamed the model rather than giving it new ability, and @dream_synthesizer never
+  // called the real dream function. A short menu that works beats a long one that
+  // implies capability it doesn't have.
 ];
 
 // --- Native TTS Hook ---
@@ -771,6 +771,9 @@ export default function App() {
     if (!isAuthenticated || needsPairing || didHandshakeRef.current) return;
     didHandshakeRef.current = true;
     performServerHandshake(currentUser);
+    // Ask once per install, after login rather than on first launch — permission
+    // prompts before the user has seen what BMO does get denied out of hand.
+    ensureNotificationPermission();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per launch, not on every history/message change
   }, [isAuthenticated, needsPairing]);
 
@@ -795,6 +798,11 @@ export default function App() {
           // that path, so an unparsed "[face:thinking]" was rendering as literal text.
           const { emotion, cleanText } = parseBmoEmotion(n.text);
           if (emotion && EMOTION_MAP[emotion]) setActiveEmotion(emotion);
+          // Only notify when they're not already looking at the chat — a notification
+          // for a message visible on screen is just noise.
+          if (appIsBackgrounded()) {
+            notify({ id: n.id, title: 'BMO learned something', body: cleanText || n.text });
+          }
           setMessages(prev => prev.some(m => m.proactiveId === n.id) ? prev : [...prev, {
             id: newLocalId(),
             chatId: activeChatId,

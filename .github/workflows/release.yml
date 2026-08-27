@@ -1,0 +1,88 @@
+name: Release APK
+
+# Builds a downloadable APK and attaches it to a GitHub Release.
+# Trigger by pushing a tag (git tag v7.3.0 && git push origin v7.3.0), or run it by hand
+# from the Actions tab.
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (e.g. v7.3.0)"
+        required: true
+        default: "v0.0.0-test"
+
+permissions:
+  contents: write   # needed to create the release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22          # matches .nvmrc; Capacitor 8 requires >=22
+          cache: 'npm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The APK bakes in VITE_ vars at build time, so this build deliberately carries no
+      # key or server address. Whoever installs it sets the server in Settings and pairs
+      # the device — shipping a build with someone's token compiled in would be a leak.
+      - name: Build web assets
+        run: npm run build
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: ./android
+        run: ./gradlew assembleDebug
+
+      - name: Name the artifact
+        id: name
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "bmo-$TAG.apk"
+          echo "size=$(du -h "bmo-$TAG.apk" | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bmo-apk
+          path: bmo-*.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.name.outputs.tag }}
+          name: BMO ${{ steps.name.outputs.tag }}
+          files: bmo-*.apk
+          generate_release_notes: true
+          body: |
+            ## BMO ${{ steps.name.outputs.tag }}
+
+            Debug APK, ${{ steps.name.outputs.size }}. Sideload it, then in the app:
+
+            1. **Settings → Server Address** — point it at your BMO server
+               (e.g. `http://192.168.1.x:18789`, or a Tailscale IP).
+            2. **Pair the device** — the server prints a pairing code on startup when no
+               devices are enrolled.
+
+            This build contains no API key and no server address; it can't talk to anyone
+            else's BMO. You need your own server running — see the
+            [README](https://github.com/${{ github.repository }}#-getting-started).
+
+            > Unsigned debug build: Android will warn about installing from an unknown
+            > source. Build it yourself from source if you'd rather not trust a CI artifact.

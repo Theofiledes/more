@@ -1320,22 +1320,18 @@ def trim_messages_to_budget(messages, limit_tokens=MODEL_CONTEXT_LIMIT, reserve_
     return trimmed
 
 MICRO_AGENTS = {
-    "@android_debugger": {
-        "model": "moondream",
-        "prompt": "You are @android_debugger. Filter adb logcat traces, identify FATAL EXCEPTIONs / NullPointerExceptions, locate failing line in android/ or src/, and draft a fix."
-    },
-    "@ui_polisher": {
-        # "auto" = resolved to whatever chat model is actually installed, at dispatch time
-        "model": "auto",
-        "prompt": "You are @ui_polisher. Review frontend src/App.jsx and CSS components. Propose high-impact aesthetic enhancements, smooth transitions, retro game colors, and micro-animations."
-    },
+    # Deliberately just one shipped agent plus a template. The original five were mostly
+    # thin prompt wrappers that looked more capable than they were, and a menu of vague
+    # personas is worse than one that works — fork @code_auditor to build your own.
     "@code_auditor": {
         "model": "auto",
-        "prompt": "You are @code_auditor. Inspect recent git diffs (`git status`, `git diff`). Verify path safety, input validation, resource efficiency, and security."
+        "prompt": "You are @code_auditor. Inspect recent git diffs (`git status`, `git diff`). Verify path safety, input validation, resource efficiency, and security. Report findings concisely — no preamble."
     },
-    "@dream_synthesizer": {
+    # Template. Copy this block, rename it, and change the prompt. "model": "auto" uses
+    # whatever chat model is loaded; "type": "cli" instead shells out to a command.
+    "@example_agent": {
         "model": "auto",
-        "prompt": "You are @dream_synthesizer. Perform memory distillation on recent history, extract key milestones, and update MEMORY.md."
+        "prompt": "You are @example_agent, a template. Replace this prompt in server.py's MICRO_AGENTS to build your own specialist. Say that you are a placeholder and explain how to customise you."
     },
     "@aider_architect": {
         "type": "cli",

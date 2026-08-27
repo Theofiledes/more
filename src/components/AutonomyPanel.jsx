@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Brain, Cloud, MessageSquare, Zap, Check, Layers, Undo2 } from 'lucide-react';
 import { getApiUrl, getApiToken } from '../utils/api';
 import { playClick, playChime } from '../utils/soundEffects';
+import { notify, appIsBackgrounded } from '../utils/notifications';
 
 /**
  * Controls how much BMO thinks and speaks on its own.
@@ -16,6 +17,7 @@ const AutonomyPanel = () => {
   const [busy, setBusy] = useState(false);
   const [memo, setMemo] = useState(null);
   const [showFacts, setShowFacts] = useState(false);
+  const notifiedEscalationRef = useRef(null);
 
   const authFetch = useCallback((path, opts = {}) =>
     fetch(`${getApiUrl()}${path}`, {
@@ -34,6 +36,17 @@ const AutonomyPanel = () => {
         authFetch('/v1/dream/status').then(r => r.ok ? r.json() : null),
         authFetch('/v1/memory').then(r => r.ok ? r.json() : null),
       ]);
+      // A pending escalation is BMO blocked waiting on you, so it's worth a notification
+      // — but only once per request, not on every 10s poll.
+      if (a?.escalation_pending && appIsBackgrounded()
+          && notifiedEscalationRef.current !== a.escalation_pending.at) {
+        notifiedEscalationRef.current = a.escalation_pending.at;
+        notify({
+          id: Date.now(),
+          title: 'BMO wants cloud help',
+          body: `"${a.escalation_pending.reason}" — tap to approve in Settings.`,
+        });
+      }
       if (a) setData(a);
       if (d) setDream(d);
       if (m) setMemo(m);
