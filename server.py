@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from git import Repo
 import base64
 import time
+from urllib.parse import quote
 
 try:
     from dotenv import load_dotenv
@@ -404,6 +405,117 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
 # quota pool — it returned 429 while pinned versions on the same key returned 200.
 # Pin a real version and let it be overridden.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
+
+WIKI_UA = {"User-Agent": "BMO/1.0 (self-hosted AI companion; https://github.com/Theofiledes/bmoapp)"}
+# Optional real web search. DuckDuckGo's free Instant Answer API only knows well-known
+# entities — it returns nothing for most practical queries — so a key here is what makes
+# general web search actually work. Brave's free tier is ~2k queries/month.
+BRAVE_SEARCH_API_KEY = os.getenv("BRAVE_SEARCH_API_KEY", "")
+
+async def wikipedia_lookup(query: str, sentences: int = 3):
+    """Search Wikipedia, then summarise the best-matching article.
+
+    Two calls rather than one: the REST summary endpoint needs an exact title and 404s
+    on anything else, so a plain query like "python asyncio" has to be resolved to a
+    real article first."""
+    if not query.strip():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15.0, headers=WIKI_UA, follow_redirects=True) as client:
+            r = await client.get("https://en.wikipedia.org/w/api.php", params={
+                "action": "query", "list": "search", "srsearch": query,
+                "format": "json", "srlimit": 1,
+            })
+            if not r.is_success:
+                return None
+            hits = r.json().get("query", {}).get("search", [])
+            if not hits:
+                return None
+            title = hits[0]["title"]
+            r2 = await client.get(
+                f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(title.replace(' ', '_'))}")
+            if not r2.is_success:
+                return None
+            d = r2.json()
+            extract = " ".join((d.get("extract") or "").split(". ")[:sentences]).strip()
+            if extract and not extract.endswith("."):
+                extract += "."
+            return {
+                "title": d.get("title", title),
+                "extract": extract or d.get("description", ""),
+                "url": d.get("content_urls", {}).get("desktop", {}).get("page", ""),
+            }
+    except Exception as e:
+        print(f"[WIKI] lookup failed: {e}", flush=True)
+        return None
+
+async def brave_search(query: str, count: int = 4):
+    """Real web results, if a key is configured."""
+    if not BRAVE_SEARCH_API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get("https://api.search.brave.com/res/v1/web/search",
+                                 params={"q": query, "count": count},
+                                 headers={"Accept": "application/json",
+                                          "X-Subscription-Token": BRAVE_SEARCH_API_KEY})
+        if not r.is_success:
+            print(f"[SEARCH] Brave HTTP {r.status_code}", flush=True)
+            return None
+        results = r.json().get("web", {}).get("results", [])
+        return [{"title": x.get("title", ""),
+                 "snippet": re.sub(r"<[^>]+>", "", x.get("description", "")),
+                 "url": x.get("url", "")} for x in results[:count]] or None
+    except Exception as e:
+        print(f"[SEARCH] Brave failed: {e}", flush=True)
+        return None
+
+async def duckduckgo_instant(query: str):
+    """DDG's free instant-answer. Good for well-known entities, empty for most else."""
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            r = await client.get("https://api.duckduckgo.com/", params={
+                "q": query, "format": "json", "no_html": 1, "skip_disambig": 1})
+        if not r.is_success:
+            return None
+        d = r.json()
+        if d.get("AbstractText"):
+            return {"summary": d["AbstractText"], "url": d.get("AbstractURL", "")}
+        # Related topics often carry a usable one-liner when the abstract is empty.
+        for t in d.get("RelatedTopics", []):
+            if isinstance(t, dict) and t.get("Text"):
+                return {"summary": t["Text"], "url": t.get("FirstURL", "")}
+        return None
+    except Exception as e:
+        print(f"[SEARCH] DDG failed: {e}", flush=True)
+        return None
+
+async def perform_web_search(query: str):
+    """Best available answer, trying sources in order of usefulness.
+
+    Returns a plain string for the model. Says plainly when nothing was found rather
+    than returning an empty result the model will paper over with invention."""
+    if not query.strip():
+        return "No search query given."
+
+    brave = await brave_search(query)
+    if brave:
+        lines = [f"{i+1}. {b['title']}\n   {b['snippet'][:220]}\n   {b['url']}"
+                 for i, b in enumerate(brave)]
+        return "Web results for '" + query + "':\n" + "\n".join(lines)
+
+    ddg = await duckduckgo_instant(query)
+    wiki = await wikipedia_lookup(query)
+    parts = []
+    if ddg:
+        parts.append(f"{ddg['summary']}" + (f" ({ddg['url']})" if ddg['url'] else ""))
+    if wiki and wiki["extract"]:
+        parts.append(f"Wikipedia — {wiki['title']}: {wiki['extract']}" +
+                     (f" ({wiki['url']})" if wiki["url"] else ""))
+    if parts:
+        return "\n\n".join(parts)
+    return (f"No results found for '{query}'. Say so plainly — do not guess an answer. "
+            f"(For general web search, set BRAVE_SEARCH_API_KEY in .env.)")
 
 async def triage_is_notable(text_sample: str):
     """Cheap local pass: is there anything here worth remembering at all?
@@ -1056,9 +1168,20 @@ async def get_weather(location: str = "New York", token: str = Depends(get_token
         return {"status": "error", "message": str(e)}
     return {"status": "error", "message": "Location not found."}
 
+@app.get("/v1/tools/wikipedia")
+async def wikipedia_endpoint(query: str, token: str = Depends(get_token)):
+    page = await wikipedia_lookup(query)
+    if not page:
+        return {"status": "not_found", "query": query}
+    return {"status": "success", **page}
+
 @app.get("/v1/tools/search")
 async def web_search(query: str, token: str = Depends(get_token)):
     """Fetch live web search summary for BMO."""
+    return {"status": "success", "query": query, "summary": await perform_web_search(query)}
+
+async def _legacy_web_search_unused(query: str):
+    """Kept only so the original DDG-only body isn't silently lost."""
     try:
         res = requests.get(f"https://api.duckduckgo.com/?q={query}&format=json&no_html=1&skip_disambig=1", timeout=10)
         if res.ok:
@@ -1421,17 +1544,19 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
             output_str = f"Weather lookup failed: {we}"
     elif tool_name in ["web_search", "search"]:
         query = tool_call.get("query", "")
-        await broadcast_fn(f"[36m[TOOL: web_search] Searching for '{query}'...[0m")
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                s_res = await client.get(f"https://api.duckduckgo.com/?q={query}&format=json&no_html=1&skip_disambig=1")
-                if s_res.is_success:
-                    data = s_res.json()
-                    output_str = data.get("AbstractText") or data.get("Heading") or "No direct summary found."
-                else:
-                    output_str = "Web search returned no results."
-        except Exception as se:
-            output_str = f"Web search failed: {se}"
+        await broadcast_fn(f"\u001b[36m[TOOL: web_search] Searching for '{query}'...\u001b[0m")
+        output_str = await perform_web_search(query)
+    elif tool_name in ["wikipedia", "wiki"]:
+        query = tool_call.get("query") or tool_call.get("topic", "")
+        await broadcast_fn(f"\u001b[36m[TOOL: wikipedia] Looking up '{query}'...\u001b[0m")
+        page = await wikipedia_lookup(query)
+        if page and page["extract"]:
+            output_str = f"Wikipedia — {page['title']}: {page['extract']}"
+            if page["url"]:
+                output_str += f"\nSource: {page['url']}"
+        else:
+            output_str = (f"No Wikipedia article found for '{query}'. Say so plainly — "
+                          f"do not guess an answer.")
     return output_str
 
 @app.post("/v1/chat/completions")
@@ -1666,7 +1791,11 @@ FACE_TAG_RE = re.compile(r'\[face:\s*([a-zA-Z0-9_-]+)\]', re.I)
 CLAIMED_ACTION_RE = re.compile(
     r"\b(i(?:'| ha)?ve (?:created|written|added|saved|made)|i(?:'ll| will) (?:create|write|add|save|make)"
     r"|here'?s? (?:is )?(?:the|your|a) [^.\n]{0,40}(?:file|note|script|markdown)"
-    r"|here'?s how it looks|i (?:created|added|wrote|saved))\b", re.I)
+    r"|here'?s how it looks|i (?:created|added|wrote|saved)"
+    # Claiming a lookup it never performed. Answering from memory is how you get
+    # confidently-wrong facts presented as researched ones.
+    r"|here'?s what i (?:found|got)|i (?:looked (?:it )?up|searched|found (?:that|this))"
+    r"|according to (?:my search|wikipedia|the search))\b", re.I)
 # A filename with an extension, e.g. notes.md — used with a code fence as the giveaway
 # that the model is *showing* a file rather than writing one.
 FILENAME_RE = re.compile(r"\b[\w.-]+\.(?:md|txt|py|js|jsx|json|ya?ml|sh|html|css|toml)\b", re.I)
@@ -1692,6 +1821,20 @@ def contradicts_tool_failure(final_text: str, tool_output: str) -> bool:
     if not TOOL_ERROR_RE.search(tool_output):
         return False
     return bool(SUCCESS_CLAIM_RE.search(final_text))
+
+# Matching the model's phrasing turned into whack-a-mole — it invents a new way to say
+# "here's what I found" every time. Keying off the USER's request is stable: if they
+# asked for a lookup or an action, a reply with no tool call did not do it, whatever it
+# calls itself.
+USER_WANTS_TOOL_RE = re.compile(
+    r"\b(look ?up|search|google|wikipedia|wiki|find out|what'?s the weather|weather in"
+    r"|run |execute |git |ls |cat |grep |uname"
+    r"|create (?:a )?(?:file|note|script)|write (?:a )?(?:file|note|script)|make (?:a )?file"
+    r"|put a .{0,30}(?:file|markdown|note)|read (?:the )?file|open (?:the )?file)\b", re.I)
+
+def user_requested_tool_action(user_text: str) -> bool:
+    """True when the user's message plainly asks BMO to *do* something external."""
+    return bool(user_text and USER_WANTS_TOOL_RE.search(user_text))
 
 def claims_action_without_doing(text: str) -> bool:
     """True when the reply presents a file/action as done but carries no tool call.
@@ -1850,7 +1993,10 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
             # If the model narrated an action instead of performing one, make it try
             # again — once. Better a retry than telling the user a file exists when it
             # doesn't. See claims_action_without_doing().
-            if claims_action_without_doing(response_text):
+            last_user_msg = next((m.get("content", "") for m in reversed(incoming_messages)
+                                  if m.get("role") == "user" and isinstance(m.get("content"), str)), "")
+            if claims_action_without_doing(response_text) or (
+                    user_requested_tool_action(last_user_msg) and not extract_tool_call(response_text)):
                 await broadcast_to_managers(
                     "\u001b[33m[GUARD] Reply claimed an action with no tool call — retrying.\u001b[0m")
                 yield sse({"type": "status", "text": "RETRYING AS A REAL ACTION"})

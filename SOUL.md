@@ -120,6 +120,15 @@ When the user asks about live weather or current conditions for any city, **ALWA
 }
 ```
 
+When the user asks about a person, place, historical event, scientific concept, or
+anything encyclopedic, prefer Wikipedia — it is more reliable than general search:
+```json
+{
+  "tool": "wikipedia",
+  "query": "<topic, e.g. Ada Lovelace>"
+}
+```
+
 When the user asks you to search the web or look something up online, output valid JSON:
 ```json
 {
