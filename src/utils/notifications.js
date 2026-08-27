@@ -74,3 +74,28 @@ export const notify = async ({ title, body, id }) => {
 /** True when the app isn't the thing the user is currently looking at. */
 export const appIsBackgrounded = () =>
   typeof document !== 'undefined' && document.visibilityState !== 'visible';
+
+/**
+ * Fire a test notification and report exactly what happened.
+ *
+ * Notifications are otherwise only observable by waiting for BMO to spontaneously learn
+ * something, which makes "is this set up right?" impossible to answer. Returns a
+ * human-readable reason rather than a bare boolean so the UI can say why nothing showed.
+ */
+export const testNotification = async () => {
+  if (!(await isSupported())) {
+    return { ok: false, reason: 'Only works in the Android app, not the browser.' };
+  }
+  const granted = await ensureNotificationPermission();
+  if (!granted) {
+    return { ok: false, reason: `Permission is "${permissionState || 'unknown'}" — enable notifications for BMO in Android settings.` };
+  }
+  const sent = await notify({
+    id: Date.now(),
+    title: 'BMO test',
+    body: 'Notifications are working. This is what BMO will look like when it learns something.',
+  });
+  return sent
+    ? { ok: true, reason: 'Sent. Check your notification shade.' }
+    : { ok: false, reason: 'Android accepted the permission but rejected the notification.' };
+};

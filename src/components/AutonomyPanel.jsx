@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Brain, Cloud, MessageSquare, Zap, Check, Layers, Undo2 } from 'lucide-react';
 import { getApiUrl, getApiToken } from '../utils/api';
 import { playClick, playChime } from '../utils/soundEffects';
-import { notify, appIsBackgrounded } from '../utils/notifications';
+import { notify, appIsBackgrounded, testNotification } from '../utils/notifications';
 
 /**
  * Controls how much BMO thinks and speaks on its own.
@@ -18,6 +18,7 @@ const AutonomyPanel = () => {
   const [memo, setMemo] = useState(null);
   const [showFacts, setShowFacts] = useState(false);
   const notifiedEscalationRef = useRef(null);
+  const [notifyResult, setNotifyResult] = useState(null);
 
   const authFetch = useCallback((path, opts = {}) =>
     fetch(`${getApiUrl()}${path}`, {
@@ -208,6 +209,27 @@ const AutonomyPanel = () => {
           <Seg value="note" current={data.proactive_mode} onPick={v => patch({ proactive_mode: v })} label="NOTES"  hint="Leaves a short note about what it learned" />
           <Seg value="full" current={data.proactive_mode} onPick={v => patch({ proactive_mode: v })} label="FULL"   hint="May also follow up with questions or suggestions" />
         </div>
+        {/* Otherwise the only way to test notifications is to wait for BMO to learn
+            something on its own, which makes a setup problem indistinguishable from
+            "nothing has happened yet". */}
+        <button
+          type="button"
+          onClick={async () => {
+            playClick();
+            const r = await testNotification();
+            setNotifyResult(r);
+            setTimeout(() => setNotifyResult(null), 6000);
+          }}
+          className="w-full py-1.5 mt-1 bg-[#9fc28e] text-[#2d482e] border-2 border-[#2d482e] rounded text-[7px] font-bold uppercase"
+        >
+          Send a test notification
+        </button>
+        {notifyResult && (
+          <div className={`text-[7px] px-2 py-1 rounded border-2 border-[#2d482e] ${
+            notifyResult.ok ? 'bg-[#9fc28e] text-[#2d482e]' : 'bg-[#ffcc00] text-[#2d482e]'}`}>
+            {notifyResult.reason}
+          </div>
+        )}
       </div>
 
       {/* Memory depth */}
