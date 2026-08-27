@@ -144,7 +144,9 @@ server (e.g. a Tailscale IP) rather than baking a personal address into the buil
 BMO is designed for a private network, not the public internet.
 
 - **`VITE_BMO_API_KEY` is the only access gate.** Generate a real random secret. The server
-  won't boot without one and warns loudly if you leave the well-known default in place.
+  won't boot without one, and **refuses to start at all** if you leave the well-known
+  default token in place while binding beyond localhost — that combination is an
+  unauthenticated shell for anyone on your network.
 - **`wake-bmo.sh` binds `0.0.0.0` by default** so your phone can reach it. Set
   `BMO_BIND_HOST=127.0.0.1` in `.env` to restrict BMO to the local machine only.
 - **Prefer a private mesh network** (e.g. [Tailscale](https://tailscale.com)) over

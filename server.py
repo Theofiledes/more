@@ -68,12 +68,30 @@ if not _raw_token:
     )
 API_TOKEN = _raw_token
 if API_TOKEN == _DEFAULT_API_TOKEN:
+    # The default token is printed in this repo's source and in every README that
+    # copies it. Combined with a non-localhost bind that's an unauthenticated shell
+    # for anyone on the network, so refuse rather than warn. wake-bmo.sh exports
+    # BMO_BIND_HOST; a bare uvicorn invocation won't, and localhost is the safe
+    # assumption there.
+    _bind = os.getenv("BMO_BIND_HOST", "127.0.0.1")
+    _local = _bind in ("127.0.0.1", "localhost", "::1", "")
+    if not _local:
+        raise RuntimeError(
+            f"Refusing to start: BMO is set to bind {_bind} (reachable from your network) "
+            f"while still using the well-known default API token.\n"
+            f"BMO can execute shell commands, so this would expose a shell to anyone who "
+            f"can reach this machine.\n\n"
+            f"Fix it by generating a real secret:\n"
+            f"  python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
+            f"and setting it as VITE_BMO_API_KEY in .env.\n"
+            f"(Or set BMO_BIND_HOST=127.0.0.1 to stay on this machine only.)"
+        )
     print("\n" + "=" * 70)
     print("  WARNING: BMO is using the well-known default API token.")
     print("  This value is public — anyone who has it can control BMO,")
     print("  including running shell commands on this machine.")
-    print("  Set a real secret in API_TOKEN or VITE_BMO_API_KEY before")
-    print("  exposing this server beyond localhost.")
+    print("  Binding is limited to localhost while this token is in use.")
+    print("  Set a real secret in API_TOKEN or VITE_BMO_API_KEY to go further.")
     print("=" * 70 + "\n")
 
 # Once you've paired your devices, the shared token is the weakest link — it's one

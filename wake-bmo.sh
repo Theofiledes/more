@@ -15,6 +15,7 @@ OLLAMA_PORT="11434"
 # to preserve phone/Tailscale access to this instance; set BMO_BIND_HOST=127.0.0.1 to
 # restrict to this machine only.
 BMO_BIND_HOST="${BMO_BIND_HOST:-0.0.0.0}"
+export BMO_BIND_HOST  # server.py checks this to refuse a public bind on the default token
 if [ "$BMO_BIND_HOST" != "127.0.0.1" ] && [ "$BMO_BIND_HOST" != "localhost" ]; then
     echo "⚠️  BMO is binding to $BMO_BIND_HOST:$BMO_PORT — reachable by anyone who can reach this host on your network."
     echo "    BMO can execute shell commands. Set BMO_BIND_HOST=127.0.0.1 to restrict to this machine only."
