@@ -10,7 +10,9 @@ printing a status code and leaving you to guess.
 import importlib.util
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -164,6 +166,27 @@ print(f"    cloud brain (Gemini):      "
       f"{'key set' if gem else 'no key — local-only, which is a fine way to run BMO'}")
 print(f"    aider micro-agent:         "
       f"{'installed' if shutil.which('aider') else 'not installed — pip install aider-install'}")
+
+# Only matters if you build the APK, but the failure it prevents is a bad one: Gradle
+# runs for two minutes before dying on "invalid source release: 21", which reads like a
+# project bug rather than a JDK that's too old.
+java_note = "not installed — only needed to build the Android APK"
+if shutil.which("java"):
+    try:
+        out = subprocess.run(["java", "-version"], capture_output=True, text=True, timeout=10)
+        raw = (out.stderr or out.stdout).splitlines()[0] if (out.stderr or out.stdout) else ""
+        m = re.search(r'"(\d+)', raw)
+        major = int(m.group(1)) if m else 0
+        if major >= 21:
+            java_note = f"Java {major}"
+        elif major:
+            java_note = (f"Java {major} — too old to build the APK. Capacitor 8 needs 21; "
+                         f"install a JDK 21 (the server itself doesn't need Java at all)")
+        else:
+            java_note = f"installed, version unreadable ({raw[:40]})"
+    except Exception:
+        java_note = "installed, but `java -version` failed"
+print(f"    JDK (for APK builds):      {java_note}")
 
 print("=" * 58)
 failed = results.count(False)

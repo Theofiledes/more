@@ -24,7 +24,7 @@ machine. Ships as a web app and an Android APK.
 | **[Ollama](https://ollama.com)** | Provides the local model. Must be running. |
 | **A chat model** | Any tool-capable Ollama model. `qwen2.5:3b` is a good default — see below. |
 | **`moondream`** *(optional)* | Only needed for image/vision replies. |
-| **JDK 17 + Android SDK** *(optional)* | Only needed to build the Android APK. |
+| **JDK 21 + Android SDK** *(optional)* | Only needed to build the Android APK. Capacitor 8 requires 21 — 17 fails with `invalid source release: 21`. |
 
 ### Install
 

@@ -27,10 +27,14 @@ jobs:
           node-version: 22          # matches .nvmrc; Capacitor 8 requires >=22
           cache: 'npm'
 
+      # Java 21, not 17: @capacitor/android sets source/targetCompatibility to
+      # VERSION_21, so a 17 toolchain fails with "invalid source release: 21". This only
+      # ever broke in CI — local builds pass because a current Android Studio ships a
+      # JDK 21, so the mismatch is invisible until a release is tagged.
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
 
       - uses: android-actions/setup-android@v3
 
