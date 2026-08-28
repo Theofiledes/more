@@ -153,9 +153,15 @@ const resizeImageDataUrl = (dataUrl, maxDim = 1280, quality = 0.85) => new Promi
   img.src = dataUrl;
 });
 
+/**
+ * Ask the cloud brain (GEM BMO), via BMO's own server.
+ *
+ * This used to call Google directly with import.meta.env.VITE_GEMINI_API_KEY. Anything
+ * VITE_-prefixed is inlined into the bundle at build time, so that shipped the user's
+ * Google key in plaintext inside any APK they built and handed to someone. The key now
+ * lives only on the server; this just describes the request.
+ */
 const fetchGemini = async (command, image = null, file = null, history = []) => {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) return "Gemini API Key missing in .env!";
   const nc = typeof command === 'string' ? command.trim() : '';
   let promptText = nc;
   if (file && file.content) {
@@ -170,24 +176,29 @@ const fetchGemini = async (command, image = null, file = null, history = []) => 
   }
   contents.push({ role: "user", parts: userParts });
   try {
-    // The "gemini-flash-latest" alias has its own quota pool that 429s while pinned
-    // versions on the same key succeed — pin one, and let it be overridden.
-    const geminiModel = import.meta.env.VITE_GEMINI_MODEL || 'gemini-3.7-flash';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
+    // The model is chosen server-side (GEMINI_MODEL) so the pinned-version workaround
+    // lives in one place rather than being baked into every client build.
+    const res = await fetch(`${getApiUrl()}/v1/cloud/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getApiToken()}`,
+      },
       body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: BMO_SYSTEM_PROMPT }]
-        },
-        contents
+        system_instruction: { parts: [{ text: BMO_SYSTEM_PROMPT }] },
+        contents,
       })
     });
-    if (!res.ok) throw new Error(`Gemini API returned ${res.status}`);
-    const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "Gemini did not return a response.";
+    if (!res.ok) {
+      // The server forwards Google's own message (rate limits, bad key), which is far
+      // more useful than a bare status code.
+      let detail = `Cloud request failed (${res.status})`;
+      try { detail = (await res.json()).detail || detail; } catch { /* non-JSON body */ }
+      return `Gemini Error: ${detail}`;
+    }
+    return (await res.json()).text || "Gemini did not return a response.";
   } catch (e) {
-    console.error("Gemini API error:", e);
+    console.error("Cloud brain error:", e);
     return `Gemini Error: ${e.message}`;
   }
 };

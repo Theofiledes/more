@@ -80,6 +80,16 @@ elif TOKEN == "bmo-secret-key-2026":
 else:
     report(True, "API token configured", f"{len(TOKEN)} chars")
 
+# Carried over from before the cloud brain moved server-side. Anyone upgrading still has
+# this in their .env, where it now does nothing except sit in plaintext in any APK they
+# build — so say so rather than ignoring it.
+if os.getenv("VITE_GEMINI_API_KEY"):
+    warn("VITE_GEMINI_API_KEY is set and is no longer used",
+         "The cloud brain now goes through the server. Anything VITE_-prefixed is baked "
+         "into the client bundle in plaintext, including any APK you build and share. "
+         "Rename it to GEMINI_API_KEY in .env, and revoke the old key if you have ever "
+         "distributed a build made with it.")
+
 # 2. Ollama
 try:
     _, tags = get(f"{OLLAMA}/api/tags", timeout=5)
@@ -161,7 +171,7 @@ print(f"\n  {DIM}Optional:{RESET}")
 voice = importlib.util.find_spec("faster_whisper") is not None
 print(f"    voice input (push-to-talk): "
       f"{'installed' if voice else 'not installed — pip install -r requirements-voice.txt'}")
-gem = bool(os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY"))
+gem = bool(os.getenv("GEMINI_API_KEY"))
 print(f"    cloud brain (Gemini):      "
       f"{'key set' if gem else 'no key — local-only, which is a fine way to run BMO'}")
 print(f"    aider micro-agent:         "

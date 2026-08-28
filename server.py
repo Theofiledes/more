@@ -1,4 +1,5 @@
 import os
+import hashlib
 import re
 import json
 import shutil
@@ -463,6 +464,10 @@ async def watchdog():
             await broadcast_to_managers("\u001b[31m[WATCHDOG] Local Ollama brain unresponsive. Retrying...\u001b[0m")
             failure_count = 0
 
+# GEMINI_API_KEY is the supported name. The VITE_ fallback exists only so an existing
+# .env keeps working across the upgrade that moved the cloud brain server-side — it is
+# not a second way to configure this, and check_setup.py warns when it's still in use.
+# Reading it here is safe: the server never sends it anywhere near the client.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
 # The "gemini-flash-latest" alias resolves to a model with its own (easily exhausted)
 # quota pool — it returned 429 while pinned versions on the same key returned 200.
@@ -726,7 +731,7 @@ async def consolidate_memory(force: bool = False):
     return {"status": "ok", "before": archived, "after": inserted,
             "source": source, "batch": batch, "facts": merged}
 
-async def perform_dream_synthesis():
+async def perform_dream_synthesis(force: bool = False):
     text_sample = ""
     if os.path.exists("history.json"):
         try:
@@ -737,6 +742,19 @@ async def perform_dream_synthesis():
                 text_sample = "\n".join([f"{m.get('sender', 'user')}: {m.get('text', '')}" for m in msgs[-15:] if m.get('text')])
         except Exception:
             pass
+
+    # The sample is always "the last 15 messages", so once a conversation stops changing
+    # every subsequent dream re-summarizes the identical text. That burned a model call
+    # every idle cycle to re-derive a memory BMO already had — and when one of those 15
+    # messages was wrong, it regenerated the same false claim indefinitely, faster than
+    # it could be cleaned up. Dedup catches the duplicate afterwards; this avoids doing
+    # the work at all. A manual "dream now" still runs: the user asked for it.
+    sample_hash = hashlib.sha256(text_sample.encode("utf-8", "replace")).hexdigest()
+    if not force and text_sample and sample_hash == dream_state.get("last_sample_hash"):
+        await broadcast_to_managers(
+            "[90m[DREAM SYNTHESIS] Nothing new to think about since the last dream.[0m")
+        return None
+    dream_state["last_sample_hash"] = sample_hash
 
     # Fallback to scratch files & git activity if chat history is sparse
     if not text_sample:
@@ -868,7 +886,11 @@ dream_state = {
     "last_activity": time.time(),   # updated on every real chat request
     "last_dream": 0.0,
     "last_summary": None,
-    "last_status": "idle",          # idle | dreaming | aborted | done | failed
+    "last_status": "idle",          # idle | dreaming | aborted | done | failed | quiet
+    # Fingerprint of the last transcript summarized, so an unchanged conversation
+    # isn't re-summarized on every idle cycle. Not persisted: after a restart one
+    # redundant dream is cheaper than reasoning about a stale hash.
+    "last_sample_hash": None,
     "running": False,
     "aborted_count": 0,
 }
@@ -884,17 +906,31 @@ def note_user_activity():
         dream_state["aborted_count"] += 1
         dream_state["last_status"] = "aborted"
 
-async def run_dream(trigger: str = "idle"):
-    """One dream pass, cancellable. Returns the summary or None."""
+async def run_dream(trigger: str = "idle", force: bool = False):
+    """One dream pass, cancellable. Returns the summary or None.
+
+    force skips the "has the transcript changed?" check — for when the user pressed
+    the button and expects BMO to actually go think about something.
+    """
     global _dream_task
     dream_state["running"] = True
     dream_state["last_status"] = "dreaming"
     await broadcast_to_managers(f"[35m[DREAM] Starting ({trigger})...[0m")
     try:
-        summary = await perform_dream_synthesis()
+        had_hash = dream_state.get("last_sample_hash")
+        summary = await perform_dream_synthesis(force=force)
         dream_state["last_dream"] = time.time()
-        dream_state["last_summary"] = summary
-        dream_state["last_status"] = "done" if summary else "failed"
+        if summary:
+            dream_state["last_summary"] = summary
+            dream_state["last_status"] = "done"
+        elif dream_state.get("last_sample_hash") == had_hash:
+            # Skipped because the transcript hadn't changed. Nothing went wrong, so don't
+            # report "failed" — and keep last_summary, since what BMO last learned is
+            # still what BMO last learned.
+            dream_state["last_status"] = "quiet"
+        else:
+            dream_state["last_summary"] = summary
+            dream_state["last_status"] = "failed"
         return summary
     except asyncio.CancelledError:
         dream_state["last_status"] = "aborted"
@@ -1060,6 +1096,59 @@ async def dream_status(token: str = Depends(get_token)):
         "min_gap_seconds": DREAM_MIN_GAP_SECONDS,
     }
 
+class CloudChat(BaseModel):
+    contents: list                          # Gemini-shaped [{role, parts:[...]}]
+    system_instruction: dict | None = None
+
+@app.post("/v1/cloud/chat")
+async def cloud_chat(payload: CloudChat, token: str = Depends(get_token)):
+    """Proxy one turn to Gemini using the SERVER's key.
+
+    The client used to call Google directly with import.meta.env.VITE_GEMINI_API_KEY.
+    Anything VITE_-prefixed is inlined into the bundle at build time, so that put the
+    user's Google key in plaintext inside every APK they built — and this project's
+    whole premise is that self-hosters share builds with family. The key now never
+    leaves the server; the client just says what it wants to ask.
+
+    Note this is the *explicit* cloud toggle, not autonomous escalation, so it doesn't
+    spend escalation_budget — that counter exists to bound what BMO decides on its own,
+    and charging a button the user deliberately pressed against it would be wrong. But
+    "off" is still honoured: the user said nothing leaves the device, and a UI toggle
+    isn't a licence to override that.
+    """
+    if runtime_state["escalation_mode"] == "off":
+        raise HTTPException(
+            status_code=403,
+            detail="Cloud is off. Turn on Cloud Escalation in Settings to use GEM BMO.")
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="No Gemini key on the server. Set GEMINI_API_KEY in .env and restart.")
+    body = {"contents": payload.contents}
+    if payload.system_instruction:
+        body["system_instruction"] = payload.system_instruction
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}")
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            r = await client.post(url, json=body)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach Gemini: {e}")
+    if not r.is_success:
+        detail = ""
+        try:
+            detail = r.json().get("error", {}).get("message", "")[:200]
+        except Exception:
+            detail = r.text[:200]
+        # Surface Google's own message — a bare 429 reads as "BMO is broken" when it
+        # actually means the free tier is rate-limited.
+        raise HTTPException(status_code=r.status_code, detail=detail or "Gemini rejected the request.")
+    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    # Thinking-capable models put reasoning in its own part with no "text", so join
+    # every part that carries text rather than assuming the answer is first.
+    text = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
+    return {"text": text or "Gemini did not return a response."}
+
 class AutonomySettings(BaseModel):
     escalation_mode: str | None = None     # off | ask | auto
     escalation_budget: int | None = None
@@ -1153,7 +1242,7 @@ async def dream_now(token: str = Depends(get_token)):
     global _dream_task
     if dream_state["running"]:
         return {"status": "already_running"}
-    _dream_task = asyncio.create_task(run_dream("manual"))
+    _dream_task = asyncio.create_task(run_dream("manual", force=True))
     try:
         summary = await _dream_task
         return {"status": dream_state["last_status"], "summary": summary}
@@ -1200,13 +1289,14 @@ async def repair(token: str = Depends(get_token)):
 @app.post("/v1/system/dream")
 async def trigger_dream(token: str = Depends(get_token)):
     await broadcast_to_managers("\u001b[35m[DREAM SYNTHESIS] Manual dream command triggered...\u001b[0m")
-    fact = await perform_dream_synthesis()
+    # force=True: the user pressed the button, so run even if nothing has changed.
+    fact = await perform_dream_synthesis(force=True)
     return {"status": "ok", "message": "Dream Synthesis complete!", "fact": fact or "No new milestones to synthesize."}
 
 @app.post("/v1/system/sleep")
 async def trigger_sleep(token: str = Depends(get_token)):
     await broadcast_to_managers("\u001b[35m[BEDTIME SLEEP MODE] User said goodnight. BMO entering dream state...\u001b[0m")
-    summary = await perform_dream_synthesis()
+    summary = await perform_dream_synthesis(force=True)
     return {
         "status": "sleeping",
         "face": "(z_z)",
