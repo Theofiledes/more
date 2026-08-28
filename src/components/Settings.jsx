@@ -3,7 +3,7 @@ import { Shield, ChevronDown, RefreshCw, Link, Volume2, VolumeX, Sliders, Volume
 import { playClick, playChime, playGlitch } from '../utils/soundEffects';
 import AutonomyPanel from './AutonomyPanel';
 
-export const APP_VERSION = "v7.2.0";
+export const APP_VERSION = "v7.3.0";
 
 const Settings = ({
   activeModel,

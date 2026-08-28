@@ -7,8 +7,12 @@ android {
         applicationId "com.bmoapp.companion"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Keep in step with package.json and APP_VERSION in src/components/Settings.jsx.
+        // versionCode is what Android compares to decide an install is an upgrade, so it
+        // must increase every release: MAJOR*1000 + MINOR*100 + PATCH keeps it derivable
+        // from versionName instead of being a number someone has to remember to bump.
+        versionCode 7300
+        versionName "7.3.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
