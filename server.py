@@ -299,6 +299,50 @@ runtime_state = {
     "memory_facts": int(os.getenv("BMO_MEMORY_FACTS", "20")),
 }
 
+# Where the settings above are persisted. They used to live only in memory, so every
+# restart silently reverted whatever the user had chosen in the UI back to these defaults.
+# That's an annoyance for most of them and a privacy failure for one: a user who sets
+# escalation to "off" would have it quietly restored to "ask" by a reboot, and BMO would
+# resume offering to send their conversation to the cloud. "off" has to survive a restart
+# to mean anything.
+STATE_FILE = os.getenv("BMO_STATE_FILE", "runtime_state.json")
+PERSISTED_KEYS = ("escalation_mode", "escalation_budget", "proactive_mode", "memory_facts")
+
+def save_runtime_state():
+    """Best-effort persist. A read-only disk shouldn't take BMO down over a setting."""
+    try:
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({k: runtime_state[k] for k in PERSISTED_KEYS}, f, indent=2)
+        os.replace(tmp, STATE_FILE)   # atomic, so a crash mid-write can't truncate it
+    except Exception as e:
+        print(f"[STATE] could not save settings: {e}", flush=True)
+
+def load_runtime_state():
+    """Overlay saved settings onto the env defaults, validating as we go.
+
+    A hand-edited or truncated file must not be able to widen permissions, so anything
+    that doesn't parse is ignored and the safer env default stands.
+    """
+    if not os.path.exists(STATE_FILE):
+        return
+    try:
+        with open(STATE_FILE) as f:
+            saved = json.load(f)
+    except Exception as e:
+        print(f"[STATE] ignoring unreadable {STATE_FILE}: {e}", flush=True)
+        return
+    if saved.get("escalation_mode") in ("off", "ask", "auto"):
+        runtime_state["escalation_mode"] = saved["escalation_mode"]
+    if saved.get("proactive_mode") in ("off", "note", "full"):
+        runtime_state["proactive_mode"] = saved["proactive_mode"]
+    for key, lo, hi in (("escalation_budget", 0, 1000), ("memory_facts", 0, 500)):
+        val = saved.get(key)
+        if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
+            runtime_state[key] = val
+
+load_runtime_state()
+
 # Escalation accounting — reset daily, exposed so the UI can show what's left.
 escalation_log = {"date": None, "used": 0, "entries": [], "pending": None}
 
@@ -1029,6 +1073,7 @@ async def set_autonomy(payload: AutonomySettings, token: str = Depends(get_token
         runtime_state["proactive_mode"] = payload.proactive_mode
     if payload.memory_facts is not None and 0 <= payload.memory_facts <= 200:
         runtime_state["memory_facts"] = payload.memory_facts
+    save_runtime_state()
     return await get_autonomy(token)
 
 @app.get("/v1/memory")
