@@ -8,8 +8,25 @@ _STOPWORDS = frozenset("""
 the and for with that this from has have had was were are been being its it's you your
 what when where which who whom will would can could should may might must shall about
 into over under than then they them their there here also just only very more most
-some any all not but our out per via while does did doing done new now still remains
+some any all but our out per via while does did doing done new now still remains
 """.split())
+
+# Negation is the one thing that flips a fact's meaning while leaving every other word
+# intact. "The server is running" vs "The server is not running" differ by a single token
+# out of eight — no similarity threshold can separate them, because by every word-overlap
+# measure they ARE nearly identical. So negation is checked as a gate, not scored: if one
+# fact negates and the other doesn't, they are never duplicates regardless of overlap.
+# Without this, a correction is silently discarded in favor of the stale claim it was
+# meant to replace, and most of what a companion learns is state that flips over time.
+_NEGATIONS = frozenset("""
+no not never none nothing without cannot cant dont doesnt didnt isnt arent wasnt werent
+wont couldnt shouldnt wouldnt hasnt havent hadnt nor neither
+""".split())
+# Only grammatical negations belong above. Negative-valence words like "failed" or
+# "unable" were tried here and removed: they describe an outcome rather than reverse a
+# claim, so they split genuine restatements of one event apart instead of separating
+# opposites. When in doubt leave a word out — a missed dedup costs one redundant fact,
+# a wrongly-split pair costs nothing, but a wrongly-merged pair loses a correction.
 
 class MemoryManager:
     def __init__(self, db_path="memory.db"):
@@ -127,17 +144,22 @@ class MemoryManager:
         facts, restatements of one claim scored 0.5-0.86 against each other while
         genuinely unrelated facts scored 0.08-0.15 — a wide gap, so the exact cutoff
         inside it doesn't much matter. The one borderline case at 0.64 was itself a real
-        duplicate. Raise this if legitimate facts start getting rejected.
+        duplicate. That replay collapses 28 facts to 16; it would reach 13 without the
+        negation gate, and those 3 are the price of never merging a claim with its
+        opposite. Raise this if legitimate facts start getting rejected.
         """
         words = self._significant_words(content)
         if len(words) < 4:
             return None   # too short to judge; let it through rather than guess
+        negated = self._is_negated(content)
         conn = sqlite3.connect(self.db_path)
         try:
             rows = conn.execute("SELECT content FROM facts").fetchall()
         finally:
             conn.close()
         for (existing,) in rows:
+            if self._is_negated(existing) != negated:
+                continue   # see _NEGATIONS: opposite claims are never duplicates
             other = self._significant_words(existing)
             if not other:
                 continue
@@ -153,6 +175,13 @@ class MemoryManager:
         body = re.sub(r'^[^:]{0,24}:\s*', '', (text or '').strip())
         return {w for w in re.findall(r'[a-z0-9]{3,}', body.lower())
                 if w not in _STOPWORDS}
+
+    @staticmethod
+    def _is_negated(text):
+        """Whether the fact asserts a negative. Apostrophes are dropped first so
+        "isn't" and "isnt" both match, and "n't" doesn't survive as its own token."""
+        flat = re.sub(r"['’]", '', (text or '').lower())
+        return any(w in _NEGATIONS for w in re.findall(r'[a-z]+', flat))
 
     def search_facts(self, query, limit=3):
         conn = sqlite3.connect(self.db_path)
