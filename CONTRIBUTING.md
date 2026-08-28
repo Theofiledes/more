@@ -79,6 +79,24 @@ unzip -p android/app/build/outputs/apk/debug/app-debug.apk classes*.dex \
 If it's missing, `rm -rf node_modules/@scope/plugin/android/build` and rebuild. CI is
 unaffected — it builds from a clean checkout every time.
 
+### Notifications must not ask for an exact alarm
+
+`LocalNotifications.schedule()` defaults `isExactNotification` to **true**, and that flag
+is checked *before* the schedule is looked at. On Android 12+ an app without
+`SCHEDULE_EXACT_ALARM` gets sent to the "Alarms & reminders" settings screen — the call
+still resolves successfully, and nothing is posted. That permission is separate from the
+notification prompt, so a user who granted notifications sees BMO bounce them to a
+settings page and never notify. Passing `schedule: { at: ... }` has the same effect via
+AlarmManager, even a few hundred milliseconds out.
+
+BMO notifies about things that already happened, so it never needs an exact alarm. Pass
+`isExactNotification: false` and omit `schedule` entirely. Verify by *delivery*, never by
+the promise resolving:
+
+```bash
+adb shell dumpsys notification | grep pkg=com.bmoapp.companion
+```
+
 ## Style
 
 Match the surrounding code — it's plain React and plain FastAPI, no framework beyond

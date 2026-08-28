@@ -311,9 +311,16 @@ PERSISTED_KEYS = ("escalation_mode", "escalation_budget", "proactive_mode", "mem
 def save_runtime_state():
     """Best-effort persist. A read-only disk shouldn't take BMO down over a setting."""
     try:
+        data = {k: runtime_state[k] for k in PERSISTED_KEYS}
+        # The day's escalation tally rides along. Persisting the budget without the
+        # counter would leave the cap trivially defeated: "10 per day" resets to 0 on
+        # every restart, so a crash loop or a few reboots buys unlimited cloud calls
+        # against the user's quota and privacy. A limit you can reset by restarting is
+        # not a limit. The date is stored with it so a genuinely new day still clears.
+        data["escalation_log"] = escalation_log
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({k: runtime_state[k] for k in PERSISTED_KEYS}, f, indent=2)
+            json.dump(data, f, indent=2)
         os.replace(tmp, STATE_FILE)   # atomic, so a crash mid-write can't truncate it
     except Exception as e:
         print(f"[STATE] could not save settings: {e}", flush=True)
@@ -340,11 +347,22 @@ def load_runtime_state():
         val = saved.get(key)
         if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
             runtime_state[key] = val
-
-load_runtime_state()
+    log = saved.get("escalation_log")
+    if isinstance(log, dict) and isinstance(log.get("used"), int) and log["used"] >= 0:
+        escalation_log.update({
+            "date": log.get("date"),
+            "used": log["used"],
+            "entries": log.get("entries") or [],
+            # Deliberately not restored: a pending "may I escalate?" is a question that
+            # was asked of a user who is no longer at the same session. Re-raising it on
+            # boot would let a stale prompt collect an approval it was never shown for.
+            "pending": None,
+        })
 
 # Escalation accounting — reset daily, exposed so the UI can show what's left.
 escalation_log = {"date": None, "used": 0, "entries": [], "pending": None}
+
+load_runtime_state()
 
 # Notes BMO wants to volunteer. Queued rather than injected into the chat: the client
 # decides when (and whether) to surface them, so BMO can't interrupt mid-conversation.
@@ -378,6 +396,7 @@ def record_escalation(reason: str, chars_sent: int):
         "chars_sent": chars_sent,
     })
     log["entries"] = log["entries"][-25:]
+    save_runtime_state()   # the tally has to hit disk here, or a restart refunds it
 
 class ConnectionManager:
     def __init__(self): self.active_connections: List[WebSocket] = []
