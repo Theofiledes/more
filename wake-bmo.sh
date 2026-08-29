@@ -25,8 +25,12 @@ if [ "$BMO_BIND_HOST" != "127.0.0.1" ] && [ "$BMO_BIND_HOST" != "localhost" ]; t
     echo "    BMO can execute shell commands. Set BMO_BIND_HOST=127.0.0.1 to restrict to this machine only."
 fi
 
-# Get Tailscale IP
-IP=$(tailscale ip -4 2>/dev/null || hostname -I | awk '{print $1}')
+# Get Tailscale IP, else this machine's LAN address. `hostname -I` is GNU-only and errors
+# out on macOS, so fall through to the Darwin equivalent rather than printing a blank URL.
+IP=$(tailscale ip -4 2>/dev/null \
+     || hostname -I 2>/dev/null | awk '{print $1}' \
+     || ipconfig getifaddr en0 2>/dev/null)
+[ -n "$IP" ] || IP="localhost"
 
 echo "🤖 Checking BMO's status..."
 
@@ -48,7 +52,10 @@ else
     if [ -d "venv" ]; then
         source venv/bin/activate
     fi
-    nohup setsid ./venv/bin/python3 -m uvicorn server:app --host "$BMO_BIND_HOST" --port "$BMO_PORT" > server.log 2>&1 & disown
+    # setsid doesn't exist on macOS. `nohup ... & disown` already survives the shell
+    # closing; setsid only adds full session detachment, so use it when it's there.
+    if command -v setsid >/dev/null 2>&1; then SETSID=setsid; else SETSID=""; fi
+    nohup $SETSID ./venv/bin/python3 -m uvicorn server:app --host "$BMO_BIND_HOST" --port "$BMO_PORT" > server.log 2>&1 & disown
     echo "⏳ Waiting for BMO to stretch..."
     sleep 3
 fi

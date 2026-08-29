@@ -153,7 +153,9 @@ fi
 step "Configuration"
 if [ -f .env ]; then
     ok ".env already exists — left untouched"
-    if ! grep -q '^VITE_BMO_API_KEY=.\+' .env; then
+    # -E, not a BRE with \+: that's a GNU extension, and BSD grep (macOS) reads it as a
+    # literal plus, so the check would silently never fire and a blank token go unwarned.
+    if ! grep -qE '^VITE_BMO_API_KEY=.+' .env; then
         warn "but VITE_BMO_API_KEY looks empty. BMO will refuse to start."
         info "fix: put a random secret on that line (python3 -c \"import secrets;print(secrets.token_urlsafe(32))\")"
     fi
