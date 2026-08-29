@@ -24,12 +24,16 @@ dist-ssr
 *.sw?
 venv/
 .aider*
-.env
 __pycache__/
 *.pyc
 
+# Secrets. .env.* covers the variants people actually create by hand — .env.bak,
+# .env.old, .env.production, a dated copy made before reinstalling — any one of which
+# holds a live API key and, unlike .env itself, was not ignored before. .env.example
+# is the tracked template and is deliberately exempt.
 .env
-.env
+.env.*
+!.env.example
 
 # BMO runtime state — personal data, not source.
 # scratch/ caches images and files you send BMO (including photos).
