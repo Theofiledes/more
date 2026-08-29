@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Menu, Plus, User, X, File as FileIcon, Lock, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2, ChevronDown, GraduationCap, Loader2 } from 'lucide-react';
+import { Menu, Plus, User, X, File as FileIcon, Image as ImageIcon, Sparkles, Terminal, Volume2, ShieldCheck, ShieldAlert, Trash2, ChevronDown, GraduationCap, Loader2 } from 'lucide-react';
 import TelemetryTerminal from './components/TelemetryTerminal';
 import ChatFeed from './components/ChatFeed';
 import HardwareControls from './components/HardwareControls';
@@ -72,25 +72,22 @@ const fontStyle = `
   .real-vision { border: 2px solid #2d482e; border-radius: 4px; }
 `;
 
-// Cosmetic lock only — NOT security. The real access gate is the API_TOKEN the
-// server requires; anyone with it can bypass this UI entirely via the raw API.
-// Override with VITE_BMO_USERS="Name:pin,Name2:pin2" (e.g. "Ada:1234,Grace:5678").
 // Module scope on purpose: these ids are generated from event handlers and async
 // callbacks, never during render, but the purity rule can't tell the difference at
 // the call site. Keeping it in one helper beats scattering suppressions.
 const newLocalId = () => Date.now() + Math.random();
 
-const USERS = (() => {
+// The display name on messages and in the greeting. There used to be a PIN lock in front
+// of the app, which was cosmetic by design — the API token is and always was the only
+// real access gate, and anyone holding it can talk to the raw API without ever loading
+// this UI. All the lock actually did was stand between a new user and their first run,
+// with the default PIN documented nowhere they'd look. So it's gone, and this is just a
+// name now. The ":pin" half of the old VITE_BMO_USERS format is still parsed and ignored,
+// so an existing .env keeps working.
+const CURRENT_USER = (() => {
   const raw = import.meta.env.VITE_BMO_USERS;
-  if (raw) {
-    const parsed = {};
-    for (const entry of raw.split(',')) {
-      const [name, pin] = entry.split(':').map(s => s.trim());
-      if (name && pin) parsed[name] = { pin };
-    }
-    if (Object.keys(parsed).length > 0) return parsed;
-  }
-  return { Player: { pin: '0000' } };
+  const first = (raw || '').split(',')[0]?.split(':')[0]?.trim();
+  return first || 'Player';
 })();
 
 const EMOTION_MAP = {
@@ -434,14 +431,16 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
 
 
 export default function App() {
-  // Single profile: the account switcher was removed, so this is read-only now. USERS
-  // still drives the login PIN and the name shown on messages.
-  const [currentUser] = useState(() => Object.keys(USERS)[0]);
-  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem('bmo_authenticated') === 'true');
+  // Single profile: the account switcher was removed, so this is read-only now.
+  const [currentUser] = useState(CURRENT_USER);
+  // No client-side lock any more, so the app is "authenticated" from the first render and
+  // the handshake below runs on launch. Kept as state rather than deleted because the
+  // socket, the history poll and the pairing flow all key off it, and because a failed
+  // handshake still has to be able to hold the UI back.
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [isServerSleeping, setIsServerSleeping] = useState(false);
   // True when the server rejects our token — this device needs to pair (or was revoked).
   const [needsPairing, setNeedsPairing] = useState(false);
-  useEffect(() => { localStorage.setItem('bmo_authenticated', isAuthenticated); }, [isAuthenticated]);
 
   // Single shared telemetry/approval socket (see utils/bmoSocket.js), live only while
   // logged in — nothing meaningful to push before that anyway.
@@ -512,7 +511,6 @@ export default function App() {
   const [isEncoding, setIsEncoding] = useState(false);
   const [isHappy, setIsHappy] = useState(false);
   const [isEating, setIsEating] = useState(false);
-  const [pinInput, setPinInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
   const [streamingThinking, setStreamingThinking] = useState('');
   const [systemHealth, setSystemHealth] = useState({ backend: 'OFFLINE', ollama: 'OFFLINE' });
@@ -835,18 +833,6 @@ export default function App() {
     return () => { cancelled = true; clearInterval(t); };
   }, [isAuthenticated, needsPairing, isLoading, activeChatId, currentUser]);
 
-  const handleAuth = async (e) => {
-    if (e) { e.preventDefault(); e.stopPropagation(); }
-    if (pinInput !== USERS[currentUser].pin) {
-      playGlitch();
-      alert("INCORRECT PIN.");
-      setPinInput('');
-      return;
-    }
-    setPinInput('');
-    await performServerHandshake(currentUser);
-  };
-
   const saveServerHistory = async (newChats, newMsgs) => {
     try {
       const apiUrl = getApiUrl();
@@ -1167,7 +1153,7 @@ export default function App() {
     e.target.value = null;
   };
 
-  const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (isAuthenticated) handleSend(); else handleAuth(e); } };
+  const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   const activeMessages = messages.filter(m => m.chatId === activeChatId && m.user === currentUser);
   const activeHistory = history.filter(h => h.user === currentUser);
   const onStopTTS = () => { tts.stop(); setSpeakingMsgId(null); };
@@ -1267,16 +1253,9 @@ export default function App() {
                       <ServerAddressField onChange={() => runDiagnostic()} />
                     </div>
                   ) : needsPairing ? (
-                    /* Ahead of the PIN gate on purpose: without a valid device token
-                       nothing behind the PIN would work anyway. */
+                    /* A device without a valid token can't do anything behind this screen,
+                       so pairing comes before the app itself. */
                     <PairingScreen onPaired={() => { setNeedsPairing(false); runDiagnostic(); }} />
-                  ) : !isAuthenticated ? (
-                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-[#2d482e]">
-                      <Lock size={48} className="mb-4 opacity-80" strokeWidth={2} /><h2 className="mb-6">SECURE CONNECTION:<br/>{currentUser.toUpperCase()}</h2>
-                      <div className="w-full max-w-[200px]">
-                        <input type="password" value={pinInput} onChange={(e) => setPinInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAuth(e)} placeholder="ENTER PIN" className="w-full bg-[#9fc28e] border-2 border-[#2d482e] text-[#2d482e] p-3 rounded text-center mb-4" />
-                      </div>
-                    </div>
                   ) : (
                     <>
                       <ErrorBoundary>

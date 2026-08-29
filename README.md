@@ -31,7 +31,31 @@ machine. Ships as a web app and an Android APK.
 ```bash
 git clone <your-fork-url> bmoapp
 cd bmoapp
+./setup.sh
+```
 
+That's the whole thing. `setup.sh` checks your system dependencies, creates the
+virtualenv, installs both dependency trees, generates your API token, pulls a model if you
+don't have one, builds the UI, and runs the verifier. It's safe to re-run — **an existing
+`.env` is never overwritten**, so your token and settings survive.
+
+It asks before installing anything system-wide and never runs `sudo` without your say-so.
+
+```bash
+./setup.sh --yes        # assume yes to those prompts (ssh / scripted runs)
+./setup.sh --no-model   # skip the multi-GB model download
+```
+
+Then:
+
+```bash
+./wake-bmo.sh
+```
+
+<details>
+<summary><strong>Manual install</strong> — if you'd rather do it by hand, or setup.sh doesn't fit your platform</summary>
+
+```bash
 # 1. Backend
 python3 -m venv venv
 source venv/bin/activate
@@ -62,6 +86,10 @@ ollama pull moondream        # optional — only for image/vision replies
 > `VITE_BMO_API_KEY=` silently blanks whatever you set earlier, and BMO then refuses to
 > boot with a token error that points nowhere obvious.
 
+Then `npm run build`, and you're at the same place `./setup.sh` would have left you.
+
+</details>
+
 **Choosing a model.** The one that matters most is whether it fits in your VRAM — a model
 that spills to CPU is many times slower. On a 4GB card, a 3B model at Q4 answered in ~5s
 where a 9B took ~26s for the same prompt. Check with `ollama ps` after sending a message:
@@ -79,7 +107,15 @@ prompt for finding candidates that fit your hardware.
 ```
 
 This starts Ollama (if needed) and the BMO server, then prints your access URLs. Open the
-laptop link it gives you.
+laptop link it gives you — it carries your token, and BMO opens straight into the chat.
+There's no login screen.
+
+To run a second checkout alongside a live one (testing an upgrade, say), give it its own
+port so the two don't collide:
+
+```bash
+BMO_PORT=18790 ./wake-bmo.sh
+```
 
 **Verify your install:**
 
@@ -190,8 +226,10 @@ BMO is designed for a private network, not the public internet.
   `BMO_BIND_HOST=127.0.0.1` in `.env` to restrict BMO to the local machine only.
 - **Prefer a private mesh network** (e.g. [Tailscale](https://tailscale.com)) over
   port-forwarding. Forwarding a shell-capable server to the open internet is a bad idea.
-- **The login PIN screen is cosmetic**, stored client-side only — it is *not* an access
-  control. Treat the API token as the real boundary.
+- **There is no client-side lock.** BMO opens straight into the chat. The old PIN screen
+  was cosmetic — it never gated the API, and anyone with the token could always bypass it
+  by talking to the server directly. Anyone who can open the UI on your machine can read
+  your chats, so treat the API token, and physical access to the device, as the boundary.
 - **Anything `VITE_`-prefixed is compiled into the client bundle in plaintext**, including
   any published APK. Never put a billable cloud key there you can't afford to have scraped.
 - **`.env` is gitignored — keep it that way.** Never commit real keys.
@@ -351,6 +389,7 @@ Make BMO yours by editing **`SOUL.md`** — personality, voice, and tool rules a
 
 | Action | Command |
 |---|---|
+| Install / repair everything | `./setup.sh` |
 | Start BMO (and Ollama if needed) | `./wake-bmo.sh` |
 | Stop BMO | `pkill -f "uvicorn server:app"` |
 | Check status | `pgrep -fl "uvicorn server:app"` |

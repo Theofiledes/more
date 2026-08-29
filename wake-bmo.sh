@@ -8,8 +8,12 @@ if [ -f "$PROJECT_DIR/.env" ]; then
     set +a
 fi
 TOKEN="${VITE_BMO_API_KEY:?VITE_BMO_API_KEY is not set — configure it in .env (see .env.example)}"
-BMO_PORT="18789"
-OLLAMA_PORT="11434"
+# Overridable so a second checkout can run alongside this one. It was hardcoded, which
+# silently defeated setting BMO_PORT in .env: the .env is sourced just above, then the
+# assignment overwrote it. A test instance would find the *existing* server healthy on
+# 18789, report "already awake", and hand you a URL carrying the wrong token.
+BMO_PORT="${BMO_PORT:-18789}"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 # BMO can run a shell tool for the model. Binding beyond localhost means anyone who can
 # reach this host and the API token can run commands on this machine. Defaults to 0.0.0.0
 # to preserve phone/Tailscale access to this instance; set BMO_BIND_HOST=127.0.0.1 to
