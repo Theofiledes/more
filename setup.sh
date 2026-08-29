@@ -30,7 +30,8 @@ step() { STEP=$((STEP + 1)); printf '\n%s[%d/7] %s%s\n' "$BOLD" "$STEP" "$1" "$R
 ok()   { printf '  %s✓%s %s\n' "$GRN" "$RST" "$1"; }
 info() { printf '  %s%s%s\n' "$DIM" "$1" "$RST"; }
 warn() { printf '  %s!%s %s\n' "$YEL" "$RST" "$1"; }
-die()  { printf '\n  %s✗ %s%s\n\n' "$RED" "$1" "$RST"; exit 1; }
+# %b, not %s: the failure messages embed \n so they can print a command on its own line.
+die()  { printf '\n  %s✗ %b%s\n\n' "$RED" "$1" "$RST"; exit 1; }
 
 # Ask before doing anything that touches the system outside this directory. Defaults to
 # no: a stranger running an installer from the internet should have to opt in to sudo,
@@ -110,8 +111,11 @@ require node "Node.js"
 NODE_MAJOR=$(node -v 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/')
 if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 22 ]; then
     # Capacitor 8's CLI requires 22. The web build alone is more forgiving, so this is a
-    # warning rather than fatal — it only bites when building the APK.
-    warn "Node $(node -v) found; 22+ is required to build the Android APK (see .nvmrc)."
+    # warning rather than fatal — it only bites when building the APK. Worth saying out
+    # loud because the distro packages above install 18 or 20 on current Debian/Ubuntu, so
+    # the auto-install path can "succeed" and still leave APK builds broken.
+    warn "Node $(node -v) found — fine for the web app, too old to build the Android APK."
+    info "APK builds need 22+; distro packages are usually older. With nvm: 'nvm install' reads .nvmrc"
 else
     ok "node $(node -v)"
 fi
