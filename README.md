@@ -5,7 +5,7 @@ Runs entirely on your own hardware against a local [Ollama](https://ollama.com) 
 chat, voice, vision, live telemetry, and a tool engine that can actually operate your
 machine. Ships as a web app and an Android APK.
 
-**Version:** v7.2.0 · **Web UI:** `http://localhost:18789` · **Vite dev server:** `http://localhost:5173`
+**Version:** v7.3.0 · **Web UI:** `http://localhost:18789` · **Vite dev server:** `http://localhost:5173`
 
 > ⚠️ **Read before exposing this to a network.** BMO can execute shell commands on the
 > machine running the server. The only thing standing between the internet and a shell on
@@ -42,12 +42,25 @@ npm install
 
 # 3. Configuration — REQUIRED. The server refuses to start without a token.
 cp .env.example .env
-python3 -c "import secrets; print('VITE_BMO_API_KEY=' + secrets.token_urlsafe(32))"
-# paste that line into .env
+python3 - <<'PY'
+import pathlib, re, secrets
+env = pathlib.Path(".env")
+env.write_text(re.sub(r"(?m)^VITE_BMO_API_KEY=.*$",
+                      "VITE_BMO_API_KEY=" + secrets.token_urlsafe(32),
+                      env.read_text()))
+print("Token written to .env")
+PY
 
 # 4. Pull a model
 ollama pull qwen2.5:3b
+ollama pull moondream        # optional — only for image/vision replies
 ```
+
+> `.env.example` already ships an empty `VITE_BMO_API_KEY=` line, which is why the command
+> above rewrites it in place. If you'd rather paste a token in by hand, replace that line
+> — don't add a second one above it. `.env` is read last-value-wins, so a trailing empty
+> `VITE_BMO_API_KEY=` silently blanks whatever you set earlier, and BMO then refuses to
+> boot with a token error that points nowhere obvious.
 
 **Choosing a model.** The one that matters most is whether it fits in your VRAM — a model
 that spills to CPU is many times slower. On a 4GB card, a 3B model at Q4 answered in ~5s
@@ -112,6 +125,32 @@ pip install -r requirements-voice.txt
 Without it the mic button reports that voice input isn't configured; everything else works
 normally. Tune the model with `WHISPER_MODEL_SIZE` in `.env` (`tiny`→`large-v3`).
 
+### Optional: cloud brain (Gemini)
+
+BMO is local-only unless you give it a key. Set one in `.env` to unlock `GEM BMO` mode and
+let dream synthesis reach for a bigger brain:
+
+```bash
+GEMINI_API_KEY=your-key-here
+```
+
+Note it is **not** `VITE_`-prefixed, deliberately — the key stays server-side and never
+reaches the client bundle or an APK. An older `VITE_GEMINI_API_KEY` is still honoured as a
+fallback so upgrades don't break, but it is deprecated and should be renamed;
+`scripts/check_setup.py` will flag it if you have one, and if you ever shipped a build made
+with it, revoke that key.
+
+Escalation is gated, because sending your conversation to Google costs money and privacy:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BMO_ESCALATION_MODE` | `ask` | `off` never leaves the device · `ask` surfaces a request and waits for you · `auto` escalates freely up to the budget |
+| `BMO_ESCALATION_BUDGET` | `20` | Cloud calls per day. Persisted across restarts, so a reboot can't refund it. |
+
+In `ask` mode a request appears in **Settings → Autonomy**. Approving grants that one
+thought — it doesn't flip BMO to `auto`. If you're already at the daily limit, the panel
+says so on the button, and approving deliberately spends one over.
+
 ### Optional: Aider (code-refactoring micro-agent)
 
 The `@aider_architect` micro-agent shells out to the [Aider](https://aider.chat) CLI for
@@ -163,7 +202,7 @@ BMO is designed for a private network, not the public internet.
 
 ```text
 ========================================================================================
-                      🎮 BMO CYBER-ENGINEER DATA & AGENT PIPELINE v7.2.0
+                      🎮 BMO CYBER-ENGINEER DATA & AGENT PIPELINE v7.3.0
 ========================================================================================
 
   [ USER INPUT ] ---> ( 📱 Android App / 💻 Laptop Companion UI )
@@ -207,10 +246,25 @@ BMO is designed for a private network, not the public internet.
                             💤 BEDTIME & MEMORY PERSISTENCE
 ========================================================================================
                                        |
-    [ 🌙 Bedtime Intent ] -------------> [ 🌌 Gemini Dream Distiller ]
-    ("goodnight" / "sleep")                    |
-                                               v
-                                   [ 🧠 MEMORY.md & memory.db ]
+    [ 🌙 Bedtime Intent ] --+
+    ("goodnight" / "sleep") |
+                            +--> [ 🔍 LOCAL TRIAGE ] --(nothing notable)--> stay quiet
+    [ 😴 Idle lull ] -------+     (never leaves the box)
+                                         |
+                                    (notable)
+                                         v
+                               [ 🚦 ESCALATION GATE ]
+                               off / ask / auto + budget
+                                         |
+                        +----------------+----------------+
+                        | (allowed)                       | (denied or no key)
+                        v                                 v
+              [ 🌌 Gemini Distiller ]          [ 🤖 Local Ollama Distiller ]
+                        |                                 |
+                        +----------------+----------------+
+                                         v
+                               [ 🧠 MEMORY.md & memory.db ]
+                                (duplicates are dropped)
 ```
 
 ---
@@ -249,10 +303,18 @@ flowchart TD
         L1 --> AG3["@example_agent - template to fork"]
     end
 
-    subgraph MemoryPersistence ["💾 Persistence & Bedtime Sleep Mode"]
-        E --> DS[🌌 Gemini Cloud Dream Synthesis]
-        DS -->|Update Facts| DB[(SQLite memory.db)]
-        DS -->|Append Milestones| MD[📄 MEMORY.md]
+    subgraph MemoryPersistence ["💾 Persistence, Idle Dreams & Bedtime Sleep Mode"]
+        E --> TR{"🔍 Local triage — worth remembering?"}
+        IDLE[😴 Idle lull] --> TR
+        TR -->|no| QUIET[🤫 Stay quiet]
+        TR -->|yes| GATE{"🚦 Escalation gate — off / ask / auto + budget"}
+        GATE -->|allowed| DS[🌌 Gemini Dream Synthesis]
+        GATE -->|denied or no key| DL[🤖 Local Dream Synthesis]
+        DS --> DEDUP{Already known?}
+        DL --> DEDUP
+        DEDUP -->|yes| QUIET
+        DEDUP -->|no| DB[(SQLite memory.db)]
+        DEDUP -->|no| MD[📄 MEMORY.md]
     end
 
     L1 -->|BMO Voice Output| UI[📱 App Feed & Native TTS]
