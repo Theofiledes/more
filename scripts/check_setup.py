@@ -81,14 +81,15 @@ else:
     report(True, "API token configured", f"{len(TOKEN)} chars")
 
 # Carried over from before the cloud brain moved server-side. Anyone upgrading still has
-# this in their .env, where it now does nothing except sit in plaintext in any APK they
-# build — so say so rather than ignoring it.
+# this in their .env. The server does still read it as a fallback, so the warning has to
+# say "deprecated", not "unused" — telling someone their working key does nothing sends
+# them chasing a problem they don't have. The real hazard is the VITE_ prefix itself.
 if os.getenv("VITE_GEMINI_API_KEY"):
-    warn("VITE_GEMINI_API_KEY is set and is no longer used",
-         "The cloud brain now goes through the server. Anything VITE_-prefixed is baked "
-         "into the client bundle in plaintext, including any APK you build and share. "
-         "Rename it to GEMINI_API_KEY in .env, and revoke the old key if you have ever "
-         "distributed a build made with it.")
+    warn("VITE_GEMINI_API_KEY is set — deprecated, rename it to GEMINI_API_KEY",
+         "The server still honours this name as a fallback, so your cloud brain works. "
+         "But anything VITE_-prefixed is baked into the client bundle in plaintext, "
+         "including any APK you build and share. Rename it to GEMINI_API_KEY in .env, and "
+         "revoke the old key if you have ever distributed a build made with it.")
 
 # 2. Ollama
 try:
@@ -171,7 +172,9 @@ print(f"\n  {DIM}Optional:{RESET}")
 voice = importlib.util.find_spec("faster_whisper") is not None
 print(f"    voice input (push-to-talk): "
       f"{'installed' if voice else 'not installed — pip install -r requirements-voice.txt'}")
-gem = bool(os.getenv("GEMINI_API_KEY"))
+# Mirror server.py's own lookup, which falls back to the deprecated VITE_ name. Checking
+# only GEMINI_API_KEY reported "local-only" to people whose cloud brain was in fact live.
+gem = bool(os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY"))
 print(f"    cloud brain (Gemini):      "
       f"{'key set' if gem else 'no key — local-only, which is a fine way to run BMO'}")
 print(f"    aider micro-agent:         "
