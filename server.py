@@ -685,7 +685,7 @@ async def consolidate_memory(force: bool = False):
             async with httpx.AsyncClient(timeout=90.0) as client:
                 r = await client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
             if r.is_success:
-                parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                parts = (r.json().get("candidates") or [{}])[0].get("content", {}).get("parts", [])
                 merged_text = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
                 source = "gemini"
             else:
@@ -731,7 +731,7 @@ async def consolidate_memory(force: bool = False):
     return {"status": "ok", "before": archived, "after": inserted,
             "source": source, "batch": batch, "facts": merged}
 
-async def perform_dream_synthesis(force: bool = False):
+async def perform_dream_synthesis(force: bool = False, approved: bool = False):
     text_sample = ""
     if os.path.exists("history.json"):
         try:
@@ -743,20 +743,10 @@ async def perform_dream_synthesis(force: bool = False):
         except Exception:
             pass
 
-    # The sample is always "the last 15 messages", so once a conversation stops changing
-    # every subsequent dream re-summarizes the identical text. That burned a model call
-    # every idle cycle to re-derive a memory BMO already had — and when one of those 15
-    # messages was wrong, it regenerated the same false claim indefinitely, faster than
-    # it could be cleaned up. Dedup catches the duplicate afterwards; this avoids doing
-    # the work at all. A manual "dream now" still runs: the user asked for it.
-    sample_hash = hashlib.sha256(text_sample.encode("utf-8", "replace")).hexdigest()
-    if not force and text_sample and sample_hash == dream_state.get("last_sample_hash"):
-        await broadcast_to_managers(
-            "[90m[DREAM SYNTHESIS] Nothing new to think about since the last dream.[0m")
-        return None
-    dream_state["last_sample_hash"] = sample_hash
-
-    # Fallback to scratch files & git activity if chat history is sparse
+    # Fallback to scratch files & git activity if chat history is sparse. This has to run
+    # before the fingerprint below: otherwise the git path is dedup'd against a hash of the
+    # empty history sample, which describes text that was never summarized and never
+    # changes — so an unchanged git log would be re-dreamed every idle cycle forever.
     if not text_sample:
         try:
             proc = await asyncio.create_subprocess_shell("git log -n 5 --oneline", stdout=asyncio.subprocess.PIPE)
@@ -765,6 +755,27 @@ async def perform_dream_synthesis(force: bool = False):
         except Exception:
             text_sample = "BMO app initialized with local vision, scratch storage, and full terminal control."
 
+    # The sample is always "the last 15 messages", so once a conversation stops changing
+    # every subsequent dream re-summarizes the identical text. That burned a model call
+    # every idle cycle to re-derive a memory BMO already had — and when one of those 15
+    # messages was wrong, it regenerated the same false claim indefinitely, faster than
+    # it could be cleaned up. Dedup catches the duplicate afterwards; this avoids doing
+    # the work at all. A manual "dream now" still runs: the user asked for it.
+    #
+    # The fingerprint is committed only once a pass actually finishes (see below), never
+    # here. Committing it up front meant a dream cancelled by note_user_activity() — which
+    # happens by design the moment the user comes back — still marked its transcript as
+    # dreamed and retired it permanently: every later cycle matched the hash and stayed
+    # quiet forever. Same for a model timeout. last_outcome records what really happened so
+    # run_dream can tell "skipped" from "failed" instead of guessing from the hash.
+    dream_state["last_outcome"] = "failed"
+    sample_hash = hashlib.sha256(text_sample.encode("utf-8", "replace")).hexdigest()
+    if not force and sample_hash == dream_state.get("last_sample_hash"):
+        dream_state["last_outcome"] = "skipped"
+        await broadcast_to_managers(
+            "[90m[DREAM SYNTHESIS] Nothing new to think about since the last dream.[0m")
+        return None
+
     prompt = f"You are BMO's Dream Synthesizer. Summarize key user preferences, milestones, or important project facts from this context into 1 concise bullet point in BMO voice (max 25 words):\n\n{text_sample[:1500]}"
 
     # Triage first — most lulls are not worth a memory, and deciding that locally is
@@ -772,6 +783,11 @@ async def perform_dream_synthesis(force: bool = False):
     notable, triage_reason = await triage_is_notable(text_sample)
     dream_state["last_triage"] = {"notable": notable, "reason": triage_reason}
     if not notable:
+        # triage_is_notable fails open, so a "no" is a real verdict from a working model
+        # rather than an outage. The pass finished; fingerprint the sample so later cycles
+        # don't pay to re-triage identical text.
+        dream_state["last_sample_hash"] = sample_hash
+        dream_state["last_outcome"] = "quiet"
         await broadcast_to_managers(f"\u001b[36m[DREAM] Nothing notable ({triage_reason}) - staying quiet.\u001b[0m")
         return None
 
@@ -779,11 +795,28 @@ async def perform_dream_synthesis(force: bool = False):
     # 1. Escalate to the cloud only if the gate allows. "ask" deliberately does NOT send:
     #    it records a pending request for the UI and falls through to the local model.
     allowed, gate_reason = escalation_allowed()
+    if approved and not allowed:
+        # You pressed Approve for this exact thought, which outranks the gate — including
+        # a spent daily budget. Falling back to the local model here would make the button
+        # a lie: the request would be "granted" and still never reach the cloud. Going over
+        # the limit is your call to make, so say so loudly rather than refusing quietly.
+        log = _escalation_today()
+        if log["used"] >= runtime_state["escalation_budget"]:
+            await broadcast_to_managers(
+                f"\u001b[33m[DREAM] Approved past today's limit "
+                f"({log['used']}/{runtime_state['escalation_budget']}) - spending anyway.\u001b[0m")
+        allowed, gate_reason = True, "approved by you"
     if GEMINI_API_KEY and not allowed and runtime_state["escalation_mode"] == "ask":
+        # over_budget travels with the request so the panel can warn *before* you approve.
+        # The gate closes on budget before it closes on mode, so a request raised while the
+        # limit is spent looks identical to any other one — and approving it now really
+        # does overspend.
+        log = _escalation_today()
         escalation_log["pending"] = {
             "at": datetime.now().strftime("%H:%M:%S"),
             "reason": triage_reason,
             "chars": len(text_sample[:1500]),
+            "over_budget": log["used"] >= runtime_state["escalation_budget"],
         }
         await broadcast_to_managers(
             f"\u001b[33m[DREAM] Wants cloud help ({triage_reason}) - awaiting approval.\u001b[0m")
@@ -800,7 +833,7 @@ async def perform_dream_synthesis(force: bool = False):
                 # Thinking-capable Gemini models return the reasoning as its own part with
                 # no "text", so parts[0] can legitimately be empty — join every part that
                 # actually carries text instead of assuming the answer is first.
-                parts = res.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                parts = (res.json().get("candidates") or [{}])[0].get("content", {}).get("parts", [])
                 summary = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
             else:
                 # A 429 (free-tier rate limit) or 403 is not an exception, so without this
@@ -835,6 +868,10 @@ async def perform_dream_synthesis(force: bool = False):
 
     summary = tidy_summary(summary)
     if summary:
+        # A summary exists, so the pass genuinely completed — this is the only place the
+        # transcript earns its fingerprint. Both returns below are reached from here.
+        dream_state["last_sample_hash"] = sample_hash
+        dream_state["last_outcome"] = "done"
         fact = f"Dream Milestone: {summary}"
         # Every cycle re-summarizes largely the same history, so most dreams restate what
         # BMO already knows. When add_fact rejects it as a duplicate, stay quiet entirely:
@@ -891,6 +928,9 @@ dream_state = {
     # isn't re-summarized on every idle cycle. Not persisted: after a restart one
     # redundant dream is cheaper than reasoning about a stale hash.
     "last_sample_hash": None,
+    # What the last pass actually did: skipped | quiet | done | failed. Set by
+    # perform_dream_synthesis, read by run_dream to pick last_status.
+    "last_outcome": None,
     "running": False,
     "aborted_count": 0,
 }
@@ -906,27 +946,32 @@ def note_user_activity():
         dream_state["aborted_count"] += 1
         dream_state["last_status"] = "aborted"
 
-async def run_dream(trigger: str = "idle", force: bool = False):
+async def run_dream(trigger: str = "idle", force: bool = False, approved: bool = False):
     """One dream pass, cancellable. Returns the summary or None.
 
     force skips the "has the transcript changed?" check — for when the user pressed
     the button and expects BMO to actually go think about something.
+
+    approved means the user granted this specific thought a cloud call, which outranks
+    the escalation gate (including a spent daily budget).
     """
     global _dream_task
     dream_state["running"] = True
     dream_state["last_status"] = "dreaming"
     await broadcast_to_managers(f"[35m[DREAM] Starting ({trigger})...[0m")
     try:
-        had_hash = dream_state.get("last_sample_hash")
-        summary = await perform_dream_synthesis(force=force)
+        summary = await perform_dream_synthesis(force=force, approved=approved)
         dream_state["last_dream"] = time.time()
         if summary:
             dream_state["last_summary"] = summary
             dream_state["last_status"] = "done"
-        elif dream_state.get("last_sample_hash") == had_hash:
-            # Skipped because the transcript hadn't changed. Nothing went wrong, so don't
-            # report "failed" — and keep last_summary, since what BMO last learned is
-            # still what BMO last learned.
+        elif dream_state.get("last_outcome") in ("skipped", "quiet"):
+            # Nothing went wrong: either the transcript hadn't changed since the last dream,
+            # or triage found nothing worth remembering. Comparing hashes could not tell
+            # these apart from a real failure — a forced dream that then died on a model
+            # timeout left the hash untouched too, and got reported to the user as "quiet"
+            # after they had explicitly pressed the button. Keep last_summary either way,
+            # since what BMO last learned is still what BMO last learned.
             dream_state["last_status"] = "quiet"
         else:
             dream_state["last_summary"] = summary
@@ -1143,7 +1188,11 @@ async def cloud_chat(payload: CloudChat, token: str = Depends(get_token)):
         # Surface Google's own message — a bare 429 reads as "BMO is broken" when it
         # actually means the free tier is rate-limited.
         raise HTTPException(status_code=r.status_code, detail=detail or "Gemini rejected the request.")
-    parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    # `or [{}]` rather than a .get default: a safety-blocked prompt comes back 200 with
+    # candidates: [] and a promptFeedback.blockReason. The default only applies when the
+    # key is absent, so indexing that empty list threw IndexError out of the endpoint as a
+    # bare 500 — the client showed "Cloud request failed (500)" instead of the real reason.
+    parts = (r.json().get("candidates") or [{}])[0].get("content", {}).get("parts", [])
     # Thinking-capable models put reasoning in its own part with no "text", so join
     # every part that carries text rather than assuming the answer is first.
     text = " ".join(p.get("text", "") for p in parts if p.get("text")).strip()
@@ -1227,14 +1276,18 @@ async def approve_escalation(token: str = Depends(get_token)):
     log = _escalation_today()
     if not log["pending"]:
         raise HTTPException(status_code=404, detail="No pending escalation request.")
+    was_over_budget = bool(log["pending"].get("over_budget"))
     log["pending"] = None
-    prev = runtime_state["escalation_mode"]
-    runtime_state["escalation_mode"] = "auto"
-    try:
-        summary = await run_dream("approved-escalation")
-    finally:
-        runtime_state["escalation_mode"] = prev
-    return {"status": "ok", "summary": summary}
+    # force=True is load-bearing: the dream that asked for permission already fingerprinted
+    # this transcript, so without it the approved pass dedups against itself, returns None
+    # before ever reaching Gemini, and the approval does nothing.
+    #
+    # approved=True replaces the old trick of flipping escalation_mode to "auto" and back.
+    # That only moved the gate's *mode* check and left the budget check standing, so an
+    # approval raised at the daily limit still fell back to local — and it mutated global
+    # state that any concurrent request would have read.
+    summary = await run_dream("approved-escalation", force=True, approved=True)
+    return {"status": "ok", "summary": summary, "over_budget": was_over_budget}
 
 @app.post("/v1/dream/now")
 async def dream_now(token: str = Depends(get_token)):
@@ -2303,7 +2356,7 @@ async def name_chat(payload: TitleRequest, token: str = Depends(get_token)):
             async with httpx.AsyncClient(timeout=15.0) as client:
                 r = await client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
             if r.is_success:
-                parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                parts = (r.json().get("candidates") or [{}])[0].get("content", {}).get("parts", [])
                 title = clean(" ".join(p.get("text", "") for p in parts if p.get("text")))
                 if title:
                     return {"title": title}

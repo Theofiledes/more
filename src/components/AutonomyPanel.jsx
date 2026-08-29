@@ -155,11 +155,21 @@ const AutonomyPanel = () => {
           <div className="text-[7px] text-[#2d482e] opacity-80">
             &ldquo;{data.escalation_pending.reason}&rdquo; · would send {data.escalation_pending.chars} chars
           </div>
+          {/* Approving overrides the daily budget rather than being refused by it, so the
+              cost has to be visible on the button you're about to press — not discovered
+              afterwards in the log. */}
+          {data.escalation_pending.over_budget && (
+            <div className="text-[7px] font-bold text-[#8a2020]">
+              ⚠ Already at today&rsquo;s limit ({data.escalation_used_today}/{data.escalation_budget}).
+              Approving spends an extra cloud call.
+            </div>
+          )}
           <button
             type="button" disabled={busy} onClick={approveEscalation}
             className="w-full py-1.5 bg-[#007aff] text-white border-2 border-[#2d482e] rounded text-[8px] font-bold uppercase disabled:opacity-50"
           >
-            <Check size={10} className="inline mr-1" /> ALLOW THIS ONCE
+            <Check size={10} className="inline mr-1" />
+            {data.escalation_pending.over_budget ? 'ALLOW ANYWAY (OVER LIMIT)' : 'ALLOW THIS ONCE'}
           </button>
         </div>
       )}
