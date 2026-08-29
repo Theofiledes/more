@@ -749,11 +749,28 @@ async def perform_dream_synthesis(force: bool = False, approved: bool = False):
     # changes — so an unchanged git log would be re-dreamed every idle cycle forever.
     if not text_sample:
         try:
-            proc = await asyncio.create_subprocess_shell("git log -n 5 --oneline", stdout=asyncio.subprocess.PIPE)
+            # cwd=WORKSPACE_DIR, not the process cwd: WORKSPACE_DIR exists so server.py can
+            # run from outside the repo, and without this the fallback shelled out wherever
+            # uvicorn happened to start. Off-root that prints "fatal: not a git repository"
+            # to the log and leaves a bare "Recent Git Commits:" header as the sample —
+            # non-empty, so it fingerprints and triages as unremarkable, and the fallback
+            # silently never works again.
+            proc = await asyncio.create_subprocess_shell(
+                "git log -n 5 --oneline", cwd=WORKSPACE_DIR,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             out, _ = await proc.communicate()
-            text_sample = f"Recent Git Commits:\n{out.decode().strip()}"
+            commits = out.decode().strip()
+            # An empty result means no commits or no repo — say nothing rather than hand the
+            # model a header with nothing under it.
+            text_sample = f"Recent Git Commits:\n{commits}" if commits else ""
         except Exception:
             text_sample = "BMO app initialized with local vision, scratch storage, and full terminal control."
+
+    # Nothing to think about at all — no history and no commits. Bail before triage rather
+    # than paying a model call to be told that empty text is unremarkable.
+    if not text_sample.strip():
+        dream_state["last_outcome"] = "quiet"
+        return None
 
     # The sample is always "the last 15 messages", so once a conversation stops changing
     # every subsequent dream re-summarizes the identical text. That burned a model call
@@ -1644,26 +1661,30 @@ async def metrics(token: str = Depends(get_token)):
         "active_messages": last_context_metrics["active_messages"]
     }
 
-_warned_missing_placeholder = False
+_warned_missing_placeholder = set()
 
-def substitute_placeholders(text: str) -> str:
+def substitute_placeholders(text: str, source: str = "workspace files") -> str:
     """Fills in workspace-scoping placeholders in SOUL.md/AGENTS.md before they're
     injected into the live system prompt. Must run every time those files are loaded —
     if {{WORKSPACE_DIR}} ever reaches the model unsubstituted, BMO reads it as its
     literal scope and workspace tool-scoping silently breaks."""
-    global _warned_missing_placeholder
-    if "{{WORKSPACE_DIR}}" not in text and not _warned_missing_placeholder:
-        # SOUL.md's workspace-scoping line was likely hand-edited back to a literal path
-        # (e.g. via the Settings > Workspace Editor UI) — the substitution is a silent
-        # no-op in that case, so warn once rather than fail quietly.
-        _warned_missing_placeholder = True
-        print("WARNING: no {{WORKSPACE_DIR}} placeholder found in workspace files — "
-              "did SOUL.md get edited back to a literal path?")
+    # Warn on the real failure signature — the absolute path sitting there literally where
+    # the placeholder should be — not on mere absence. AGENTS.md legitimately contains
+    # neither, so "absent" fired on every single startup and blamed SOUL.md, which was
+    # innocent. Worse, the flag was one global bool: AGENTS.md burned it at boot, so if
+    # SOUL.md later *did* get hand-edited (via Settings > Workspace Editor, the case this
+    # guard exists for) the warning could never fire again. Keyed by file now, so one
+    # file can't disarm the check for another.
+    if (WORKSPACE_DIR in text and "{{WORKSPACE_DIR}}" not in text
+            and source not in _warned_missing_placeholder):
+        _warned_missing_placeholder.add(source)
+        print(f"WARNING: {source} has a literal path where {{{{WORKSPACE_DIR}}}} should be — "
+              f"substitution is a no-op, so workspace scoping won't follow WORKSPACE_DIR.")
     return text.replace("{{WORKSPACE_DIR}}", WORKSPACE_DIR)
 
 def build_system_prompt():
-    soul = substitute_placeholders(memory_manager.get_workspace_file("SOUL.md") or "You are BMO.")
-    agents = substitute_placeholders(memory_manager.get_workspace_file("AGENTS.md") or "")
+    soul = substitute_placeholders(memory_manager.get_workspace_file("SOUL.md") or "You are BMO.", "SOUL.md")
+    agents = substitute_placeholders(memory_manager.get_workspace_file("AGENTS.md") or "", "AGENTS.md")
     facts = memory_manager.get_recent_facts_summary(limit=runtime_state["memory_facts"])
     now_str = datetime.now().astimezone().strftime("%A, %B %d, %Y — %I:%M %p %Z")
     return f"{soul}\n\n### CURRENT DATE & TIME:\n{now_str}\n\n### BMO MICRO-AGENTS & SUB-ROUTINE PLAYBOOKS:\n{agents}\n\n### RECENT MEMORY FACTS:\n{facts}"
