@@ -29,15 +29,16 @@ machine. Ships as a web app and an Android APK.
 ### Install
 
 ```bash
-git clone <your-fork-url> bmoapp
+git clone https://github.com/Theofiledes/bmoapp.git
 cd bmoapp
 ./setup.sh
 ```
 
 That's the whole thing. `setup.sh` checks your system dependencies, creates the
 virtualenv, installs both dependency trees, generates your API token, pulls a model if you
-don't have one, builds the UI, and runs the verifier. It's safe to re-run — **an existing
-`.env` is never overwritten**, so your token and settings survive.
+don't have one, installs the commit guard, builds the UI, and runs the verifier. It's safe
+to re-run — **an existing `.env` is never overwritten**, so your token and settings
+survive.
 
 It asks before installing anything system-wide and never runs `sudo` without your say-so.
 
@@ -212,6 +213,29 @@ cd android && ./gradlew assembleDebug
 The APK bundles the web UI, so set **Settings → Server Address** in-app to point at your
 server (e.g. a Tailscale IP) rather than baking a personal address into the build.
 
+#### Pairing a device
+
+The APK carries whatever `VITE_BMO_API_KEY` was in `.env` when it was built. If that key
+no longer matches the server — you rotated the token, or you're installing an APK someone
+else built, or you set `BMO_SHARED_TOKEN=off` — every request comes back `401` and the app
+drops to a **PAIR THIS DEVICE** screen on its own. You don't have to go looking for it.
+
+Give it a code:
+
+- **First device:** the server prints one at startup when nothing is enrolled yet —
+  look for `BMO DEVICE PAIRING` in its output (`server.log`). Valid 15 minutes, single use.
+  Restart the server to print a fresh one.
+- **Any device after that:** generate an invite from a paired one, or
+  `curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:18789/v1/pair/new -H 'Content-Type: application/json' -d '{"label":"my phone"}'`
+
+Type the code, name the device, tap **Pair Device**. The device gets its own token, stored
+in `localStorage`, which from then on takes precedence over the built-in key — so it keeps
+working after you rotate the shared token, and survives reinstalling the APK over the top.
+
+Redeeming a code needs no auth (the code *is* the credential), and it's rate-limited to 10
+attempts per 5 minutes. Manage what's enrolled via `GET /v1/devices` and
+`POST /v1/devices/{id}/revoke`.
+
 ---
 
 ## 🔐 Security
@@ -232,7 +256,19 @@ BMO is designed for a private network, not the public internet.
   your chats, so treat the API token, and physical access to the device, as the boundary.
 - **Anything `VITE_`-prefixed is compiled into the client bundle in plaintext**, including
   any published APK. Never put a billable cloud key there you can't afford to have scraped.
+  Your Gemini key belongs in `GEMINI_API_KEY`, which stays server-side — putting it in a
+  `VITE_` variable inlines it into every APK you build and share.
 - **`.env` is gitignored — keep it that way.** Never commit real keys.
+- **BMO commits on your behalf, so mind what's in the repo.** Its auto-checkpoint runs
+  `git add -A` before executing a shell command, and `POST /v1/git/push` commits and
+  pushes to `origin` unattended. Nobody is watching at that moment. `githooks/pre-commit`
+  (installed by `setup.sh`) refuses to stage JPEG/HEIC by magic bytes, any image carrying
+  EXIF GPS, anything under `scratch/`, and base64 image payloads pasted into text — it
+  checks content, so renaming a photo doesn't get it past. Use `git commit --no-verify` to
+  override deliberately. This is not hypothetical: 19 phone photos, GPS coordinates and
+  all, reached this repo's history that way before the guard existed.
+- **`scratch/` holds every image you send BMO.** It's gitignored, and it's the first place
+  to clear if you're sharing the directory.
 
 ---
 
