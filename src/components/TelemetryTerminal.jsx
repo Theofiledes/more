@@ -38,13 +38,18 @@ const TelemetryTerminal = () => {
   useEffect(() => {
     let fallbackLines = null;
     let fallbackMetrics = null;
-    const apiUrl = getApiUrl();
-    const apiToken = getApiToken();
+
+    // Read the URL and token per request, not once at mount. This effect has an empty
+    // dependency list, so hoisting them froze whatever was current when the terminal
+    // first rendered — and the setInterval pollers below then reused that value forever.
+    // Pairing swaps the build-time key for a device token in localStorage while the app
+    // stays mounted, so a device that paired successfully kept polling with the old key
+    // and got 401s until the app was restarted.
 
     const fetchTelemetry = async () => {
       try {
-        const response = await fetch(`${apiUrl}/v1/telemetry`, {
-          headers: { 'Authorization': `Bearer ${apiToken}` }
+        const response = await fetch(`${getApiUrl()}/v1/telemetry`, {
+          headers: { 'Authorization': `Bearer ${getApiToken()}` }
         });
         const data = await response.json();
         if (data.lines) setLines(data.lines);
@@ -55,8 +60,8 @@ const TelemetryTerminal = () => {
 
     const fetchMetrics = async () => {
       try {
-        const response = await fetch(`${apiUrl}/v1/system/metrics`, {
-          headers: { 'Authorization': `Bearer ${apiToken}` }
+        const response = await fetch(`${getApiUrl()}/v1/system/metrics`, {
+          headers: { 'Authorization': `Bearer ${getApiToken()}` }
         });
         setMetrics(await response.json());
       } catch {
