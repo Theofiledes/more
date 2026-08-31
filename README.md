@@ -465,6 +465,19 @@ constraints that aren't obvious from the code.
 
 ---
 
+## 🙏 Inspiration
+
+Started after watching [brenpoly](https://github.com/brenpoly) build a physical
+Raspberry Pi companion in [this video](https://youtu.be/l5ggH-YhuAw) —
+[**be-more-agent**](https://github.com/brenpoly/be-more-agent), a local AI agent on a Pi.
+Seeing someone give a local model a body and a face is what made this feel worth building.
+
+This project went a different way — a FastAPI backend with a tool engine, a React UI, and
+an Android app rather than dedicated hardware — and shares no code with it. The debt is to
+the idea. Go watch the video and star their repo.
+
+---
+
 ## 📄 License
 
 [MIT](LICENSE) — do what you like with it, just keep the copyright notice.
