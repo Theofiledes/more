@@ -474,7 +474,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("VITE_GEMINI_API_KEY")
 # Pin a real version and let it be overridden.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.7-flash")
 
-WIKI_UA = {"User-Agent": "BMO/1.0 (self-hosted AI companion; https://github.com/Theofiledes/bmoapp)"}
+WIKI_UA = {"User-Agent": "BMO/1.0 (self-hosted AI companion; https://github.com/Theofiledes/more)"}
 # Optional real web search. DuckDuckGo's free Instant Answer API only knows well-known
 # entities — it returns nothing for most practical queries — so a key here is what makes
 # general web search actually work. Brave's free tier is ~2k queries/month.

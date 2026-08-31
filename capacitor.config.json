@@ -1,6 +1,6 @@
 {
-  "appId": "com.bmoapp.companion",
-  "appName": "BMOApp",
+  "appId": "io.github.theofiledes.more",
+  "appName": "More",
   "webDir": "dist",
   "plugins": {
     "CapacitorHttp": {

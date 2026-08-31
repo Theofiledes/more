@@ -94,7 +94,7 @@ BMO notifies about things that already happened, so it never needs an exact alar
 the promise resolving:
 
 ```bash
-adb shell dumpsys notification | grep pkg=com.bmoapp.companion
+adb shell dumpsys notification | grep pkg=io.github.theofiledes.more
 ```
 
 ## Style

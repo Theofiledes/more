@@ -1,9 +1,15 @@
-# 🎮 BMO App: Companion & Cyber-Engineer AI
+# 🎮 more
+
+### *be more.*
 
 A self-hosted, local-first AI companion styled after a certain living video game console.
 Runs entirely on your own hardware against a local [Ollama](https://ollama.com) model —
 chat, voice, vision, live telemetry, and a tool engine that can actually operate your
 machine. Ships as a web app and an Android APK.
+
+<sub><i>The name: BMO is "Be MOre", and <code>more</code> is the Unix pager — the little program
+that shows you what's already on your machine, one page at a time. Both readings fit. The
+companion it ships with is BMO; see <a href="#-whats-coming">what's coming</a> for the rest.</i></sub>
 
 **Version:** v7.4.0 · **Web UI:** `http://localhost:18789` · **Vite dev server:** `http://localhost:5173`
 
@@ -29,8 +35,8 @@ machine. Ships as a web app and an Android APK.
 ### Install
 
 ```bash
-git clone https://github.com/Theofiledes/bmoapp.git
-cd bmoapp
+git clone https://github.com/Theofiledes/more.git
+cd more
 ./setup.sh
 ```
 
@@ -437,7 +443,7 @@ Make BMO yours by editing **`SOUL.md`** — personality, voice, and tool rules a
 Handy shell aliases — add to `~/.bashrc` (adjust the path to your checkout):
 
 ```bash
-alias wake-bmo='/path/to/bmoapp/wake-bmo.sh'
+alias wake-bmo='/path/to/more/wake-bmo.sh'
 alias stop-bmo='pkill -f "uvicorn server:app"'
 alias bmo-status='pgrep -fl "uvicorn server:app"'
 ```
@@ -454,6 +460,35 @@ hardware.
 The tradeoff, stated plainly: notifications fire while BMO is running, foreground or
 backgrounded. If Android kills the process, nothing arrives until you reopen the app.
 You'll be asked for permission once, after your first login.
+
+---
+
+## 🔮 What's coming
+
+### Swappable souls
+
+The personality lives in one file. `SOUL.md` is 144 lines of voice, rules, and directives,
+loaded at a single call site and injected into every prompt — which means the character is
+already a swappable component, it just isn't swappable *yet*. The plan is a `souls/`
+directory and a picker in Settings, so the same engine can wear a different face without
+touching the tool engine, the memory pipeline, or anything else.
+
+Shipping order:
+
+| Soul | Why |
+|---|---|
+| **BMO** | The default, and what's in the box today. |
+| **Football** | BMO's reflection in the mirror — the one that wants a body of its own. A second instance of the same soul running on different hardware is, more or less, what this project is. |
+| **Lumpy Space Princess** | Because somebody has to. |
+
+Souls are just markdown, so writing your own is the same job as editing `SOUL.md` — the
+built-in ones are examples, not a closed set.
+
+### Also on the list
+
+- **macOS support.** The portability fixes are in (`setsid`, `hostname -I`, BSD `grep`),
+  but nothing has actually been run on a Mac yet. Reports welcome.
+- **A signed release APK.** Today's is an unsigned debug build, so Android will warn you.
 
 ---
 

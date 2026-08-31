@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">BMOApp</string>
-    <string name="title_activity_main">BMOApp</string>
-    <string name="package_name">com.bmoapp.companion</string>
-    <string name="custom_url_scheme">com.bmoapp.companion</string>
+    <string name="app_name">More</string>
+    <string name="title_activity_main">More</string>
+    <string name="package_name">io.github.theofiledes.more</string>
+    <string name="custom_url_scheme">io.github.theofiledes.more</string>
 </resources>

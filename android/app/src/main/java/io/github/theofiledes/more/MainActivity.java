@@ -1,4 +1,4 @@
-package com.bmoapp.companion;
+package io.github.theofiledes.more;
 
 import com.getcapacitor.BridgeActivity;
 

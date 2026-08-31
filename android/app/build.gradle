@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.bmoapp.companion"
+    namespace "io.github.theofiledes.more"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.bmoapp.companion"
+        applicationId "io.github.theofiledes.more"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Keep in step with package.json and APP_VERSION in src/components/Settings.jsx.
