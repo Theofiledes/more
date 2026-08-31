@@ -59,23 +59,23 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          cp android/app/build/outputs/apk/debug/app-debug.apk "bmo-$TAG.apk"
-          echo "size=$(du -h "bmo-$TAG.apk" | cut -f1)" >> "$GITHUB_OUTPUT"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "more-$TAG.apk"
+          echo "size=$(du -h "more-$TAG.apk" | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bmo-apk
-          path: bmo-*.apk
+          name: more-apk
+          path: more-*.apk
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.name.outputs.tag }}
-          name: BMO ${{ steps.name.outputs.tag }}
-          files: bmo-*.apk
+          name: more ${{ steps.name.outputs.tag }}
+          files: more-*.apk
           generate_release_notes: true
           body: |
-            ## BMO ${{ steps.name.outputs.tag }}
+            ## more ${{ steps.name.outputs.tag }}
 
             Debug APK, ${{ steps.name.outputs.size }}. Sideload it, then in the app:
 
