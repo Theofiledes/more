@@ -349,56 +349,61 @@ BMO is designed for a private network, not the public internet.
 
 ---
 
-### 📊 GitHub Interactive Flow Diagram (Mermaid)
+### 📊 Flow diagrams
+
+**Request pipeline** — what happens when you send BMO something.
 
 ```mermaid
 flowchart TD
-    subgraph Inputs ["📥 User Inputs"]
-        A[💬 Text Prompt]
-        B[📸 Image Upload]
-        C[📼 File Cartridge]
-        D[🌦️ Weather/Search Request]
-        E["🌙 Bedtime Intent (goodnight)"]
+    A["Text prompt"] --> R
+    B["Image upload"] --> S1["scratch/scratch_img_*.ext"]
+    C["File cartridge"] --> S2["scratch/scratch_file_*.ext"]
+    D["Weather or search request"] --> W1["Open-Meteo, DuckDuckGo, Brave"]
+
+    S1 -->|"stage 1 optical analysis"| M1["Moondream local vision"]
+    M1 --> R
+    S2 --> R
+    W1 --> R
+
+    R{"Brain router"}
+    R -->|"local mode"| L1["Local Ollama model"]
+    R -->|"cloud mode"| G1["Google Gemini"]
+
+    subgraph AGENTS["Micro-agents, defined in AGENTS.md"]
+        AG1["@code_auditor"]
+        AG2["@aider_architect"]
+        AG3["@example_agent"]
     end
 
-    subgraph Pipeline ["⚙️ Data Ingestion & Scratch Storage"]
-        B -->|Auto-Cache Base64| S1[💾 /scratch/scratch_img_*.ext]
-        C -->|Auto-Cache Cartridge| S2[💾 /scratch/scratch_file_*.ext]
-        S1 -->|Stage 1 Optical Analysis| M1[👁️ Moondream Local Vision Sensor]
-        D -->|Live API Query| W1[🌐 Open-Meteo Weather / DDG API]
-    end
+    L1 -.->|"tool call"| AGENTS
+    AGENTS -.->|"result"| L1
 
-    subgraph BrainRouter ["🧠 Dual-Brain Router"]
-        M1 --> R[Brain Router]
-        S2 --> R
-        A --> R
-        W1 --> R
-        R -->|Local Mode| L1[🤖 Local Ollama model]
-        R -->|Cloud Mode| G1[☁️ Google Gemini Cloud API]
-    end
+    L1 --> UI["App feed and native TTS"]
+    G1 --> UI
+```
 
-    subgraph SubRoutines ["🤖 Micro-Agent Engine (AGENTS.md)"]
-        L1 --> AG1["@code_auditor - git diff & safety review"]
-        L1 --> AG2["@aider_architect - multi-file edits (optional)"]
-        L1 --> AG3["@example_agent - template to fork"]
-    end
+**Dream pipeline** — what happens when you don't. Runs on an idle lull or a
+`goodnight`, and every branch that ends without a new memory still fingerprints the
+sample, so the next cycle doesn't pay to think the same thought twice.
 
-    subgraph MemoryPersistence ["💾 Persistence, Idle Dreams & Bedtime Sleep Mode"]
-        E --> TR{"🔍 Local triage — worth remembering?"}
-        IDLE[😴 Idle lull] --> TR
-        TR -->|no| QUIET[🤫 Stay quiet]
-        TR -->|yes| GATE{"🚦 Escalation gate — off / ask / auto + budget"}
-        GATE -->|allowed| DS[🌌 Gemini Dream Synthesis]
-        GATE -->|denied or no key| DL[🤖 Local Dream Synthesis]
-        DS --> DEDUP{Already known?}
-        DL --> DEDUP
-        DEDUP -->|yes| QUIET
-        DEDUP -->|no| DB[(SQLite memory.db)]
-        DEDUP -->|no| MD[📄 MEMORY.md]
-    end
+```mermaid
+flowchart TD
+    IDLE["Idle lull"] --> TR
+    BED["Bedtime intent, goodnight"] --> TR
 
-    L1 -->|BMO Voice Output| UI[📱 App Feed & Native TTS]
-    G1 -->|BMO Voice Output| UI
+    TR{"Local triage: worth remembering?"}
+    TR -->|"no"| QUIET["Stay quiet, fingerprint the sample"]
+    TR -->|"yes"| GATE{"Escalation gate: off, ask, auto, plus daily budget"}
+
+    GATE -->|"denied or no key"| DL["Local dream synthesis"]
+    GATE -->|"allowed"| DS["Gemini dream synthesis"]
+
+    DL --> DEDUP
+    DS --> DEDUP
+
+    DEDUP{"Already known?"}
+    DEDUP -->|"yes"| QUIET
+    DEDUP -->|"no"| MEM[("memory.db and MEMORY.md")]
 ```
 
 ---
