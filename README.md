@@ -5,7 +5,7 @@ Runs entirely on your own hardware against a local [Ollama](https://ollama.com) 
 chat, voice, vision, live telemetry, and a tool engine that can actually operate your
 machine. Ships as a web app and an Android APK.
 
-**Version:** v7.3.0 · **Web UI:** `http://localhost:18789` · **Vite dev server:** `http://localhost:5173`
+**Version:** v7.4.0 · **Web UI:** `http://localhost:18789` · **Vite dev server:** `http://localhost:5173`
 
 > ⚠️ **Read before exposing this to a network.** BMO can execute shell commands on the
 > machine running the server. The only thing standing between the internet and a shell on
@@ -276,7 +276,7 @@ BMO is designed for a private network, not the public internet.
 
 ```text
 ========================================================================================
-                      🎮 BMO CYBER-ENGINEER DATA & AGENT PIPELINE v7.3.0
+                      🎮 BMO CYBER-ENGINEER DATA & AGENT PIPELINE v7.4.0
 ========================================================================================
 
   [ USER INPUT ] ---> ( 📱 Android App / 💻 Laptop Companion UI )
