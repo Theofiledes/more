@@ -1,0 +1,79 @@
+#!/bin/bash
+#
+# Refuse to commit personal images.
+#
+# BMO caches every image you send it, and its auto-checkpoint runs `git add -A`
+# before executing a shell command — POST /v1/git/push then commits and pushes to
+# origin/main unattended. That combination once put 19 phone photos into this
+# repo's history, every one of them carrying GPS coordinates in EXIF. .gitignore
+# covers scratch/, but only scratch/: a photo written anywhere else still gets
+# staged, and nobody is watching at the moment an agent decides to check in.
+#
+# So this checks content, not paths or extensions — a renamed .jpeg is still a
+# JPEG. The repo tracks 30 PNGs (Android launcher icons and splash screens) and
+# zero JPEGs, so refusing JPEG/HEIC outright costs nothing and needs no allowlist.
+#
+# bash, not sh: the NUL-delimited read below is a bashism, and filenames with
+# spaces are exactly the case a security guard must not fumble.
+#
+# Installed by setup.sh via `git config core.hooksPath githooks`.
+# To commit something this blocks anyway: git commit --no-verify
+
+findings=$(mktemp "${TMPDIR:-/tmp}/bmo-precommit.XXXXXX") || exit 0
+trap 'rm -f "$findings"' EXIT
+
+while IFS= read -r -d '' f; do
+    [ -f "$f" ] || continue
+
+    case "$f" in
+        scratch/*) printf 'scratch|%s\n' "$f" >> "$findings" ;;
+    esac
+
+    # Magic bytes, so an extension can't lie. JPEG is FF D8 FF; HEIC/HEIF carry an
+    # ftyp box with a heic/heix/mif1 brand at offset 4; PNG is 89 50 4E 47.
+    magic=$(dd if="$f" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    is_image=""
+    case "$magic" in
+        ffd8ff*)   printf 'jpeg|%s\n' "$f" >> "$findings"; is_image=1 ;;
+        89504e47)  is_image=1 ;;
+    esac
+
+    case "$(dd if="$f" bs=1 skip=4 count=8 2>/dev/null | tr -d '\0')" in
+        ftypheic|ftypheix|ftypmif1) printf 'heic|%s\n' "$f" >> "$findings"; is_image=1 ;;
+    esac
+
+    # An image that kept its EXIF almost certainly came from a camera. Gated on the
+    # magic bytes above: run against every staged file and this matches any source
+    # file that merely mentions the tag names — including this hook, which is how
+    # the first version of it blocked its own commit. The tracked PNGs carry no
+    # EXIF, so it never fires on a legitimate app asset. The brackets keep the
+    # pattern from matching its own text here.
+    if [ -n "$is_image" ] &&
+       dd if="$f" bs=1 count=65536 2>/dev/null | grep -qa 'GPS[L]atitude\|GPS[I]nfo'; then
+        printf 'gps|%s\n' "$f" >> "$findings"
+    fi
+
+    # A base64 image pasted into JSON/JS/Markdown — how two 1.6 MB photos ended up
+    # inside history.json without a single image file being staged.
+    if grep -qaE 'data:image/[a-z]+;base64,[A-Za-z0-9+/=]{500,}' "$f" 2>/dev/null; then
+        printf 'b64|%s\n' "$f" >> "$findings"
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+[ -s "$findings" ] || exit 0
+
+printf '\n\033[31m✗ Commit blocked — personal image data detected.\033[0m\n\n'
+sort -u "$findings" | while IFS='|' read -r kind file; do
+    case "$kind" in
+        scratch) reason="under scratch/ (BMO's image cache)" ;;
+        jpeg)    reason="is a JPEG by magic bytes, whatever it is named" ;;
+        heic)    reason="is a HEIC/HEIF photo" ;;
+        gps)     reason="carries EXIF GPS — a camera photo with a location in it" ;;
+        b64)     reason="embeds a base64 image payload" ;;
+        *)       reason="matched an image check" ;;
+    esac
+    printf '    %s\n        %s\n' "$file" "$reason"
+done
+printf '\n  Unstage it:      git restore --staged <file>\n'
+printf '  Override anyway: git commit --no-verify\n\n'
+exit 1

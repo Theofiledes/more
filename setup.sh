@@ -26,7 +26,7 @@ done
 
 BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; RST=$'\033[0m'
 STEP=0
-step() { STEP=$((STEP + 1)); printf '\n%s[%d/7] %s%s\n' "$BOLD" "$STEP" "$1" "$RST"; }
+step() { STEP=$((STEP + 1)); printf '\n%s[%d/8] %s%s\n' "$BOLD" "$STEP" "$1" "$RST"; }
 ok()   { printf '  %s✓%s %s\n' "$GRN" "$RST" "$1"; }
 info() { printf '  %s%s%s\n' "$DIM" "$1" "$RST"; }
 warn() { printf '  %s!%s %s\n' "$YEL" "$RST" "$1"; }
@@ -194,12 +194,29 @@ else
     fi
 fi
 
-# ---------------------------------------------------------------- 6. build
+# ---------------------------------------------------------------- 6. commit guard
+step "Commit guard"
+# BMO's auto-checkpoint stages everything with `git add -A`, and POST /v1/git/push
+# commits and pushes to origin unattended — which is how 19 phone photos, GPS EXIF
+# and all, once landed in this repo's history. githooks/pre-commit blocks image data
+# by content. Only meaningful inside a git checkout, so skip it in a tarball install.
+if [ -d .git ]; then
+    if [ "$(git config core.hooksPath)" = "githooks" ]; then
+        ok "commit guard already active"
+    else
+        git config core.hooksPath githooks && chmod +x githooks/pre-commit 2>/dev/null
+        ok "commit guard installed (blocks committing photos; --no-verify overrides)"
+    fi
+else
+    info "not a git checkout — skipping the commit guard"
+fi
+
+# ---------------------------------------------------------------- 7. build
 step "Building the web UI"
 npm run build >/dev/null 2>&1 || die "The frontend build failed. Run 'npm run build' to see why."
 ok "dist/ built"
 
-# ---------------------------------------------------------------- 7. verify
+# ---------------------------------------------------------------- 8. verify
 step "Verifying"
 python3 scripts/check_setup.py
 CHECK_RC=$?

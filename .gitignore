@@ -38,6 +38,16 @@ __pycache__/
 # BMO runtime state — personal data, not source.
 # scratch/ caches images and files you send BMO (including photos).
 scratch/
+
+# Photos, wherever they land. scratch/ above only covers BMO's own cache; this repo's
+# history once carried 19 phone JPEGs with GPS coordinates in EXIF, staged from outside
+# it by an agent running `git add -A`. The tracked images are all PNG app assets, so no
+# legitimate file is lost here. githooks/pre-commit is the real guard — it checks magic
+# bytes rather than trusting a file extension; this is just the cheap first layer.
+*.jpg
+*.jpeg
+*.heic
+*.heif
 history.json
 memory.db
 runtime_state.json
