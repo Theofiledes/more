@@ -16,7 +16,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          # 22, matching .nvmrc, lint.yml and release.yml. This said 18, which fails
+          # before it ever reaches Android: vite's rolldown imports styleText from
+          # node:util, added in 20.12, so `npm run build` dies with "does not provide
+          # an export named 'styleText'". Capacitor 8's CLI wants >=22 regardless.
+          node-version: 22
           cache: 'npm'
 
       - name: Setup Java JDK
