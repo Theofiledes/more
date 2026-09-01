@@ -61,3 +61,9 @@ public/voices/*.onnx.json
 
 # BMO writes what it learns about you here — seeded from MEMORY.example.md
 MEMORY.md
+
+# BMO's personality, yours to tune — seeded from SOUL.example.md on first run.
+# Untracked on purpose: this file used to be tracked, so `git pull` fought every
+# customisation you made. The tool-calling protocol that used to live alongside it now
+# sits in AGENTS.md, which stays tracked and keeps updating.
+SOUL.md

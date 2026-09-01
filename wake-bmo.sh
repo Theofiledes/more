@@ -7,7 +7,9 @@ if [ -f "$PROJECT_DIR/.env" ]; then
     source "$PROJECT_DIR/.env"
     set +a
 fi
-TOKEN="${VITE_BMO_API_KEY:?VITE_BMO_API_KEY is not set — configure it in .env (see .env.example)}"
+# Break-glass token for this script's own health check. BMO_MASTER_TOKEN is the current
+# name; VITE_BMO_API_KEY is the deprecated one, still accepted so an existing .env works.
+TOKEN="${BMO_MASTER_TOKEN:-${VITE_BMO_API_KEY:?BMO_MASTER_TOKEN is not set — configure it in .env (see .env.example)}}"
 # Overridable so a second checkout can run alongside this one. It was hardcoded, which
 # silently defeated setting BMO_PORT in .env: the .env is sourced just above, then the
 # assignment overwrote it. A test instance would find the *existing* server healthy on

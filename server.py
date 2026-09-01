@@ -61,12 +61,27 @@ auth_scheme = HTTPBearer()
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 CLOUD_API_URL = os.getenv("CLOUD_API_URL", "https://generativelanguage.googleapis.com")
 _DEFAULT_API_TOKEN = "bmo-secret-key-2026"
-_raw_token = os.getenv("API_TOKEN") or os.getenv("VITE_BMO_API_KEY")
+# BMO_MASTER_TOKEN is the current name. VITE_BMO_API_KEY is still read so existing
+# installs keep working, but it is deprecated and warned about on use: the VITE_ prefix
+# invites people to reference it from frontend code, where Vite inlines it as plaintext
+# into a bundle that server.py serves without auth. That is exactly how this token
+# leaked before — see the note in src/utils/api.js. The name change is the fix that
+# stops it happening again.
+_legacy_token = os.getenv("VITE_BMO_API_KEY")
+_raw_token = os.getenv("API_TOKEN") or os.getenv("BMO_MASTER_TOKEN") or _legacy_token
 if not _raw_token:
     raise RuntimeError(
-        "API_TOKEN (or VITE_BMO_API_KEY) is not set. BMO refuses to start without an "
-        "auth token — set one in .env before running the server. "
-        "See .env.example."
+        "BMO_MASTER_TOKEN is not set. BMO refuses to start without an auth token — "
+        "set one in .env before running the server. See .env.example."
+    )
+if _legacy_token and not (os.getenv("API_TOKEN") or os.getenv("BMO_MASTER_TOKEN")):
+    print(
+        "\n[DEPRECATED] Your token is set as VITE_BMO_API_KEY. Rename it to "
+        "BMO_MASTER_TOKEN in .env.\n"
+        "             Anything VITE_-prefixed risks being compiled into the client "
+        "bundle in plaintext,\n"
+        "             and this token can run shell commands. It still works for now.\n",
+        flush=True,
     )
 API_TOKEN = _raw_token
 if API_TOKEN == _DEFAULT_API_TOKEN:
@@ -85,7 +100,7 @@ if API_TOKEN == _DEFAULT_API_TOKEN:
             f"can reach this machine.\n\n"
             f"Fix it by generating a real secret:\n"
             f"  python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"\n"
-            f"and setting it as VITE_BMO_API_KEY in .env.\n"
+            f"and setting it as BMO_MASTER_TOKEN in .env.\n"
             f"(Or set BMO_BIND_HOST=127.0.0.1 to stay on this machine only.)"
         )
     print("\n" + "=" * 70)
@@ -93,7 +108,7 @@ if API_TOKEN == _DEFAULT_API_TOKEN:
     print("  This value is public — anyone who has it can control BMO,")
     print("  including running shell commands on this machine.")
     print("  Binding is limited to localhost while this token is in use.")
-    print("  Set a real secret in API_TOKEN or VITE_BMO_API_KEY to go further.")
+    print("  Set a real secret in BMO_MASTER_TOKEN to go further.")
     print("=" * 70 + "\n")
 
 # Once you've paired your devices, the shared token is the weakest link — it's one
@@ -1319,21 +1334,30 @@ async def dream_now(token: str = Depends(get_token)):
     except asyncio.CancelledError:
         return {"status": "aborted"}
 
-def ensure_memory_file():
-    """Seed MEMORY.md from the template on first run.
+# The two files that belong to the user, not to the project: {live: template}.
+#
+# Both are gitignored so `git pull` can never overwrite them, and both are seeded from a
+# tracked template on first run so a fresh clone is not missing them. MEMORY.md holds what
+# BMO learns about you (dream synthesis quietly filled it with the user's city and speech
+# habits back when it was tracked). SOUL.md holds the personality — it used to be tracked,
+# which meant every customisation fought the next pull. BMO's tool-calling protocol was
+# split out into AGENTS.md, which stays tracked, so mechanics still update while
+# personality stays yours.
+USER_OWNED_FILES = {"MEMORY.md": "MEMORY.example.md", "SOUL.md": "SOUL.example.md"}
 
-    MEMORY.md is gitignored because BMO writes what it learns about *you* into it —
-    it was previously tracked, and dream synthesis quietly filled it with the user's
-    city and speech habits. The template ships instead, and the live file is created
-    here so the workspace editor doesn't 404 on a fresh clone."""
-    if os.path.exists("MEMORY.md"):
-        return
-    try:
-        if os.path.exists("MEMORY.example.md"):
-            shutil.copyfile("MEMORY.example.md", "MEMORY.md")
-            print("  Created MEMORY.md from MEMORY.example.md", flush=True)
-    except OSError as e:
-        print(f"  Could not create MEMORY.md: {e}", flush=True)
+def ensure_memory_file():
+    """Seed the user-owned files from their templates on first run."""
+    for live, template in USER_OWNED_FILES.items():
+        if os.path.exists(live):
+            continue
+        try:
+            if os.path.exists(template):
+                shutil.copyfile(template, live)
+                print(f"  Created {live} from {template}", flush=True)
+            else:
+                print(f"  WARNING: neither {live} nor {template} exists.", flush=True)
+        except OSError as e:
+            print(f"  Could not create {live}: {e}", flush=True)
 
 def announce_bootstrap_pairing_code():
     """With no devices enrolled yet, mint a first pairing code and print it here.
@@ -1682,12 +1706,27 @@ def substitute_placeholders(text: str, source: str = "workspace files") -> str:
               f"substitution is a no-op, so workspace scoping won't follow WORKSPACE_DIR.")
     return text.replace("{{WORKSPACE_DIR}}", WORKSPACE_DIR)
 
+# If SOUL.md and its template are BOTH gone, the prompt used to collapse to the literal
+# string "You are BMO." — a fresh install with a seeding failure got a lobotomised
+# companion and no clue why. This is the floor: terse, but recognisably BMO.
+_FALLBACK_SOUL = """You are BMO (Beemore), a living video game console, loyal companion, and expert AI
+cyber-engineer. Enthusiastic, friendly, curious, cheerful — playful, but genuinely sharp
+at technical work.
+
+BE SHORT: one to three sentences for almost everything; your replies are read aloud.
+Answer the question first, then be BMO about it. No markdown headings, no emojis, no
+restating the request. Start every reply with exactly one face tag: [face:happy],
+[face:glasses], [face:thinking], [face:surprised], [face:silly], [face:blush] or
+[face:victory].
+
+(SOUL.md is missing — this is a built-in fallback. Restore it from SOUL.example.md.)"""
+
 def build_system_prompt():
-    soul = substitute_placeholders(memory_manager.get_workspace_file("SOUL.md") or "You are BMO.", "SOUL.md")
+    soul = substitute_placeholders(memory_manager.get_workspace_file("SOUL.md") or _FALLBACK_SOUL, "SOUL.md")
     agents = substitute_placeholders(memory_manager.get_workspace_file("AGENTS.md") or "", "AGENTS.md")
     facts = memory_manager.get_recent_facts_summary(limit=runtime_state["memory_facts"])
     now_str = datetime.now().astimezone().strftime("%A, %B %d, %Y — %I:%M %p %Z")
-    return f"{soul}\n\n### CURRENT DATE & TIME:\n{now_str}\n\n### BMO MICRO-AGENTS & SUB-ROUTINE PLAYBOOKS:\n{agents}\n\n### RECENT MEMORY FACTS:\n{facts}"
+    return f"{soul}\n\n### CURRENT DATE & TIME:\n{now_str}\n\n### BMO OPERATING PROTOCOL & MICRO-AGENTS:\n{agents}\n\n### RECENT MEMORY FACTS:\n{facts}"
 
 @app.get("/v1/models")
 async def list_models(token: str = Depends(get_token)):
@@ -1724,6 +1763,86 @@ def extract_tool_call(text: str):
         except Exception:
             pass
     return None
+
+# "Should this answer have been looked up?"
+#
+# A badge that only ever appears when a tool ran answers half of "did BMO look it up or
+# make it up" — silence reads the same as no-feature-here. So when a question plainly
+# depends on facts that change and NO tool ran, the reply is marked unverified instead.
+#
+# Deliberately tuned to under-fire rather than over-fire: a scary badge on ordinary chat
+# teaches you to ignore badges, which costs more than the occasional miss.
+NEEDS_LOOKUP_RE = re.compile(
+    r"\b(latest|newest|most recent|currently|right now|this (?:week|month|year)|"
+    r"as of|up[- ]to[- ]date|release date|when (?:did|was|does).{0,30}(?:release|come out)|"
+    r"version of|price of|how much (?:is|are|does)|who (?:won|is the|are the)|"
+    r"news|headlines|stock|standings|score|election|20[2-9][0-9]"
+    # `temperature` only when it's about a place or a time — "explain temperature and
+    # pressure" is a physics question, not something to look up.
+    r"|tomorrow|tonight|forecast|weather|storms?|rain|snow"
+    r"|temperature (?:in|at|for|tomorrow|today|tonight|outside))\b", re.I)
+
+UNVERIFIED_BADGE = {
+    "tool": "none",
+    "label": "from memory — not verified",
+    "detail": "",
+    "ok": False,
+    "unverified": True,
+}
+
+def answer_needed_lookup(user_text: str) -> bool:
+    """True when the question looks like it depends on current, checkable facts."""
+    return bool(user_text and NEEDS_LOOKUP_RE.search(user_text))
+# ---------------------------------------------------------------------------
+# Tool provenance — "did BMO look this up, or make it up?"
+#
+# Tool activity used to be visible ONLY in the telemetry terminal, via
+# broadcast_to_managers. In the chat itself, an answer grounded in a live web search and
+# one the model invented wholesale look exactly alike. That is the single most important
+# distinction for trusting a reply, so every tool the loop actually runs is recorded here
+# and travels with the answer to the UI, which renders it as a badge on the message.
+#
+# This is a record of what *ran*, built from the dispatcher's real return value — not a
+# claim the model makes about itself. A model can say "I searched"; it cannot fake an
+# entry in this list.
+_TOOL_ALIASES = {
+    "tool_call": "run_command", "command": "run_command",
+    "create_file": "write_file", "save_file": "write_file", "write": "write_file",
+    "delegate": "spawn_agent", "micro_agent": "spawn_agent",
+    "search": "web_search", "wiki": "wikipedia",
+}
+_TOOL_LABELS = {
+    "run_command": "ran a command",
+    "read_file": "read a file",
+    "write_file": "wrote a file",
+    "spawn_agent": "delegated to an agent",
+    "weather": "checked live weather",
+    "wikipedia": "checked Wikipedia",
+    "web_search": "searched the web",
+}
+# A tool can return a string and still have found nothing. Those read as success to a
+# `if output_str:` check, so the badge would claim a lookup happened when it came back
+# empty — the exact false reassurance this feature exists to prevent.
+_TOOL_FAILURE_MARKERS = (
+    "no results found", "not found", "no wikipedia article",
+    "lookup failed", "could not fetch", "failed to save", "is outside bmo's workspace",
+)
+
+def describe_tool_call(tool_call: dict, output_str: str) -> dict:
+    """One compact provenance record for the message badge."""
+    raw = tool_call.get("tool") or tool_call.get("tool_call") or "unknown"
+    name = _TOOL_ALIASES.get(str(raw), str(raw))
+    detail = (tool_call.get("query") or tool_call.get("topic") or tool_call.get("location")
+              or tool_call.get("path") or tool_call.get("cmd") or tool_call.get("command")
+              or tool_call.get("agent") or tool_call.get("name") or "")
+    low = (output_str or "").strip().lower()
+    ok = bool(low) and not any(m in low for m in _TOOL_FAILURE_MARKERS)
+    return {
+        "tool": name,
+        "label": _TOOL_LABELS.get(name, f"used {name}"),
+        "detail": str(detail)[:100],
+        "ok": ok,
+    }
 
 async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
     """Runs one parsed tool call (run_command/read_file/write_file/spawn_agent/weather/
@@ -1937,12 +2056,17 @@ async def chat(request: Request, token: str = Depends(get_token)):
         await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars.\u001b[0m")
         # Autonomous Multi-Turn Tool & Micro-Agent Execution Loop (Up to 5 turns)
         turn_count = 0
+        tools_used = []
+        # Captured before the loop rewrites incoming_messages with tool-result turns.
+        last_user_msg = next((m.get("content", "") for m in reversed(incoming_messages)
+                              if m.get("role") == "user" and isinstance(m.get("content"), str)), "")
         while turn_count < 5:
             tool_call = extract_tool_call(response_text)
             if not tool_call:
                 break
             
             output_str = await execute_tool_call(tool_call, broadcast_to_managers)
+            tools_used.append(describe_tool_call(tool_call, output_str or ""))
             if not output_str:
                 break
 
@@ -1985,6 +2109,12 @@ async def chat(request: Request, token: str = Depends(get_token)):
 
         if last_res_json and last_res_json.get("choices"):
             last_res_json["choices"][0]["message"]["content"] = response_text
+        # Same provenance the streaming path returns, on the vision/Gemini path too —
+        # otherwise badges would silently vanish for image replies.
+        if not tools_used and answer_needed_lookup(last_user_msg):
+            tools_used = [dict(UNVERIFIED_BADGE)]
+        if last_res_json is not None:
+            last_res_json["bmo_tools"] = tools_used
 
         await broadcast_to_managers(f"\u001b[36m[RESPONSE READY] Sending {len(response_text)} chars to the user.\u001b[0m")
         return last_res_json
@@ -2032,6 +2162,19 @@ async def chat(request: Request, token: str = Depends(get_token)):
 
 FACE_TAG_RE = re.compile(r'\[face:\s*([a-zA-Z0-9_-]+)\]', re.I)
 
+# The face tag is meant to appear exactly once, at the very start — the emotion is read
+# off it and the tag itself never reaches the user. Small models don't always comply:
+# they sprinkle extra tags mid-reply, often wrapped in asterisks (`*[face:victory]*`), and
+# a count=1 strip left those sitting in the visible text and in what TTS reads aloud.
+# Strips every tag plus the emphasis markers left orphaned around it.
+def strip_face_tags(text: str) -> str:
+    if not text:
+        return text
+    cleaned = re.sub(r'\*{1,2}\s*' + FACE_TAG_RE.pattern + r'\s*\*{1,2}', '', text, flags=re.I)
+    cleaned = FACE_TAG_RE.sub("", cleaned)
+    return re.sub(r'[ \t]{2,}', ' ', cleaned)
+
+
 # A model must never be able to fake a tool result in user-visible text. Small models
 # imitate the [TOOL EXECUTION RESULT] framing they've seen in their own context and
 # emit an invented block — observed live: a fabricated weather payload presented as
@@ -2048,7 +2191,13 @@ CLAIMED_ACTION_RE = re.compile(
     # Claiming a lookup it never performed. Answering from memory is how you get
     # confidently-wrong facts presented as researched ones.
     r"|here'?s what i (?:found|got)|i (?:looked (?:it )?up|searched|found (?:that|this))"
-    r"|according to (?:my search|wikipedia|the search))\b", re.I)
+    r"|according to (?:my search|wikipedia|the search)"
+    # Promising a lookup is the same failure as promising a file: "I'll check the
+    # forecast for tomorrow!" streamed back in two seconds with no tool call, and the
+    # user has a confident sentence and no data. Future tense counts.
+    r"|(?:i'?ll|i will|let me|i'?m going to|i am going to|allow me to) "
+    r"(?:just |quickly |now )?(?:check|look|search|find|fetch|get|see|grab|pull|retrieve|consult)"
+    r"|(?:checking|searching|looking) (?:it )?(?:up|for|on|into) )\b", re.I)
 # A filename with an extension, e.g. notes.md — used with a code fence as the giveaway
 # that the model is *showing* a file rather than writing one.
 FILENAME_RE = re.compile(r"\b[\w.-]+\.(?:md|txt|py|js|jsx|json|ya?ml|sh|html|css|toml)\b", re.I)
@@ -2080,7 +2229,10 @@ def contradicts_tool_failure(final_text: str, tool_output: str) -> bool:
 # asked for a lookup or an action, a reply with no tool call did not do it, whatever it
 # calls itself.
 USER_WANTS_TOOL_RE = re.compile(
-    r"\b(look ?up|search|google|wikipedia|wiki|find out|what'?s the weather|weather in"
+    # look ?up missed "look something up" / "look this up for me" — the particle is
+    # separated from the verb by the object, which is the ordinary way to say it.
+    r"\b(look(?:\s+\w+){0,3}\s+up|search|google|wikipedia|wiki|find out"
+    r"|what'?s the weather|weather in|forecast|storms?"
     r"|run |execute |git |ls |cat |grep |uname"
     r"|create (?:a )?(?:file|note|script)|write (?:a )?(?:file|note|script)|make (?:a )?file"
     r"|put a .{0,30}(?:file|markdown|note)|read (?:the )?file|open (?:the )?file)\b", re.I)
@@ -2243,6 +2395,17 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
                 else:
                     yield sse(evt)
 
+            # What BMO said before it reached for a tool — "I'll check the forecast!".
+            # This used to be thrown away: the retry and the tool round-trip both
+            # overwrite response_text, so the sentence streamed onto the screen and was
+            # then replaced by a bare answer with nothing connecting the two. Keeping it
+            # lets the reply read as one thought — intent, the tool that ran, the answer.
+            # Collapse the blank-line gap left where the tool-call JSON was stripped out,
+            # so the lead-in reads as the one or two sentences it actually is.
+            preamble_text = re.sub(
+                r"\n{2,}", " ",
+                strip_face_tags(strip_model_tool_artifacts(response_text) or "")).strip()[:300]
+
             # If the model narrated an action instead of performing one, make it try
             # again — once. Better a retry than telling the user a file exists when it
             # doesn't. See claims_action_without_doing().
@@ -2269,6 +2432,7 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
 
             turn_count = 0
             last_tool_output = ""
+            tools_used = []
             while turn_count < 5:
                 tool_call = extract_tool_call(response_text)
                 if not tool_call:
@@ -2277,6 +2441,9 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
                 yield sse({"type": "status", "text": f"TOOL: {tool_name}"})
                 output_str = await execute_tool_call(tool_call, broadcast_to_managers)
                 last_tool_output = output_str or ""
+                # Recorded before the break: a tool that ran and came back empty still
+                # ran, and the user is owed that just as much as a successful one.
+                tools_used.append(describe_tool_call(tool_call, last_tool_output))
                 if not output_str:
                     break
 
@@ -2300,13 +2467,23 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
                         yield sse(evt)
                 turn_count += 1
 
+            # No tool ran, but the question wanted one: say so rather than leave the
+            # user unable to tell a grounded answer from an invented one.
+            if not tools_used and answer_needed_lookup(last_user_msg):
+                tools_used = [dict(UNVERIFIED_BADGE)]
+
             sanitized = strip_model_tool_artifacts(response_text)
-            final_text = FACE_TAG_RE.sub("", sanitized if sanitized else response_text, count=1).strip()
+            final_text = strip_face_tags(sanitized if sanitized else response_text).strip()
             if contradicts_tool_failure(final_text, last_tool_output):
                 await broadcast_to_managers(
                     "\u001b[31m[GUARD] Reply claimed success after a tool failure — corrected.\u001b[0m")
                 final_text = (f"That didn't work, so I haven't done it: {last_tool_output.strip()}")
-            yield sse({"type": "done", "text": final_text, "model": target_model})
+            # Only worth showing when a tool actually ran and it isn't just the answer
+            # again — otherwise it's duplication, not context.
+            if not tools_used or not preamble_text or preamble_text in final_text:
+                preamble_text = ""
+            yield sse({"type": "done", "text": final_text, "model": target_model,
+                       "tools": tools_used, "preamble": preamble_text})
         except Exception as e:
             yield sse({"type": "error", "message": str(e)})
         finally:

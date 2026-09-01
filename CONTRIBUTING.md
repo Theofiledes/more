@@ -46,9 +46,14 @@ kernel version rather than reporting the real one. If you change how tool result
 summarized, test it against a real tool call and compare the output to what the tool
 actually returned.
 
-**The context window is a shared budget.** `SOUL.md` costs roughly 960 tokens on every
-single message, memory facts about 30 each. Anything you add to the system prompt is paid
-for on every turn, forever. Measure before adding.
+**The context window is a shared budget.** `SOUL.md` and `AGENTS.md` together cost roughly
+960 tokens on every single message, memory facts about 30 each. Anything you add to the
+system prompt is paid for on every turn, forever. Measure before adding.
+
+**`SOUL.md` is the user's; `AGENTS.md` is ours.** `SOUL.md` is gitignored and seeded from
+`SOUL.example.md`, so a user's tuned personality survives every `git pull`. That means
+changes to the tool-calling protocol belong in `AGENTS.md` — anything you put in
+`SOUL.example.md` reaches new installs only, never existing ones.
 
 **Escalation sends user data off-device.** Anything routed to the cloud leaves the user's
 machine and costs them money. It must respect `escalation_mode` — and `off` means off,

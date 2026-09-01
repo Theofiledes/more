@@ -203,12 +203,27 @@ class MemoryManager:
             return app_path
         return filename
 
-    def get_workspace_file(self, filename):
+    def get_workspace_file(self, filename, workspace=None):
+        """Read a file from inside the workspace, or None if it isn't there.
+
+        Anchored to the same base resolve_workspace_path() defaults to (cwd), so
+        SOUL.md/AGENTS.md keep resolving exactly where they always did. The boundary
+        check is realpath-based rather than the old `normpath(...).startswith("..")`
+        string test: that caught ../../etc/passwd, but followed any symlink planted
+        inside the workspace straight back out of it. Reading is not a real privilege
+        boundary here — whoever reaches this already has run_command — so this is
+        consistency with the write path, not a security control.
+        """
         if not filename: return None
-        clean_path = os.path.normpath(filename).lstrip('/')
-        if clean_path.startswith(".."): return None
-        if os.path.exists(clean_path):
-            with open(clean_path, "r", encoding="utf-8") as f: return f.read()
+        base = os.path.realpath(workspace or os.getcwd())
+        candidate = os.path.expanduser(str(filename))
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(base, candidate)
+        resolved = os.path.realpath(candidate)
+        if resolved != base and not resolved.startswith(base + os.sep):
+            return None
+        if os.path.isfile(resolved):
+            with open(resolved, "r", encoding="utf-8") as f: return f.read()
         return None
 
     def resolve_workspace_path(self, filename, workspace=None):

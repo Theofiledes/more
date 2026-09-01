@@ -76,8 +76,8 @@ cp .env.example .env
 python3 - <<'PY'
 import pathlib, re, secrets
 env = pathlib.Path(".env")
-env.write_text(re.sub(r"(?m)^VITE_BMO_API_KEY=.*$",
-                      "VITE_BMO_API_KEY=" + secrets.token_urlsafe(32),
+env.write_text(re.sub(r"(?m)^BMO_MASTER_TOKEN=.*$",
+                      "BMO_MASTER_TOKEN=" + secrets.token_urlsafe(32),
                       env.read_text()))
 print("Token written to .env")
 PY
@@ -87,11 +87,15 @@ ollama pull qwen2.5:3b
 ollama pull moondream        # optional — only for image/vision replies
 ```
 
-> `.env.example` already ships an empty `VITE_BMO_API_KEY=` line, which is why the command
+> `.env.example` already ships an empty `BMO_MASTER_TOKEN=` line, which is why the command
 > above rewrites it in place. If you'd rather paste a token in by hand, replace that line
 > — don't add a second one above it. `.env` is read last-value-wins, so a trailing empty
-> `VITE_BMO_API_KEY=` silently blanks whatever you set earlier, and BMO then refuses to
+> `BMO_MASTER_TOKEN=` silently blanks whatever you set earlier, and BMO then refuses to
 > boot with a token error that points nowhere obvious.
+>
+> Upgrading from an older checkout? This used to be called `VITE_BMO_API_KEY`. That name
+> still works — the server reads it and prints a deprecation notice — so nothing breaks on
+> pull. Rename it when convenient; see [Security](#-security) for why the prefix mattered.
 
 Then `npm run build`, and you're at the same place `./setup.sh` would have left you.
 
@@ -221,10 +225,10 @@ server (e.g. a Tailscale IP) rather than baking a personal address into the buil
 
 #### Pairing a device
 
-The APK carries whatever `VITE_BMO_API_KEY` was in `.env` when it was built. If that key
-no longer matches the server — you rotated the token, or you're installing an APK someone
-else built, or you set `BMO_SHARED_TOKEN=off` — every request comes back `401` and the app
-drops to a **PAIR THIS DEVICE** screen on its own. You don't have to go looking for it.
+**The APK carries no token at all**, and neither does the web build — that is deliberate.
+Every device earns its own credential by pairing, so a fresh install (or a rotated token,
+or an APK someone else built) comes back `401` and the app drops to a **PAIR THIS DEVICE**
+screen on its own. You don't have to go looking for it.
 
 Give it a code:
 
@@ -248,10 +252,18 @@ attempts per 5 minutes. Manage what's enrolled via `GET /v1/devices` and
 
 BMO is designed for a private network, not the public internet.
 
-- **`VITE_BMO_API_KEY` is the only access gate.** Generate a real random secret. The server
-  won't boot without one, and **refuses to start at all** if you leave the well-known
-  default token in place while binding beyond localhost — that combination is an
-  unauthenticated shell for anyone on your network.
+- **Devices authenticate by pairing; the client bundle holds no secret.** `BMO_MASTER_TOKEN`
+  is a server-side break-glass credential — it never reaches the frontend and is never
+  compiled into the web build or an APK. Generate a real random secret. The server won't
+  boot without one, and **refuses to start at all** if you leave the well-known default
+  token in place while binding beyond localhost — that combination is an unauthenticated
+  shell for anyone on your network.
+- **Why it isn't named `VITE_` any more.** It was, and that was a real hole: Vite inlines
+  `VITE_`-prefixed vars into the JS bundle as plaintext, the server serves `dist/assets`
+  without auth, and `wake-bmo.sh` binds `0.0.0.0` by default. Anyone who could reach the
+  port could download the bundle, read the token out of it, and use it to run shell
+  commands on the host — and the same string shipped inside every APK built from the tree.
+  The old name is still accepted so upgrades don't break, with a deprecation notice.
 - **`wake-bmo.sh` binds `0.0.0.0` by default** so your phone can reach it. Set
   `BMO_BIND_HOST=127.0.0.1` in `.env` to restrict BMO to the local machine only.
 - **Prefer a private mesh network** (e.g. [Tailscale](https://tailscale.com)) over
@@ -427,8 +439,45 @@ flowchart TD
 - **Bedtime Sleep Skill**: Automated memory distillation when you tell BMO goodnight.
 - **Memory & Dream Engine**: Persistent memory database (`memory.db`), `SOUL.md` directives, and background dream synthesis.
 - **Workspace Live Editor**: Edit `SOUL.md`, `AGENTS.md`, and `MEMORY.md` directly in the UI.
+- **Answer provenance**: Every reply shows which tools actually ran to produce it —
+  `searched the web`, `checked Wikipedia`, `ran a command` — built from the server's own
+  dispatcher, so BMO can claim it looked something up but cannot fake the badge. A reply
+  to a question that wanted a lookup and didn't get one is marked *from memory — not
+  verified*.
 
-Make BMO yours by editing **`SOUL.md`** — personality, voice, and tool rules all live there.
+### Making BMO yours
+
+Edit **`SOUL.md`** — voice, tone, and how BMO talks to you. **It is yours: gitignored, and
+seeded from `SOUL.example.md` on first run, so `git pull` can never overwrite it.**
+
+BMO's tool-calling protocol lives separately in **`AGENTS.md`**, which *is* tracked and
+does update on pull. That split is deliberate: the two used to be one file, so customising
+your BMO also froze its ability to learn new tools. Personality is yours; mechanics are the
+project's.
+
+> Editing `AGENTS.md` in the Workspace Editor is still supported, but since it's tracked,
+> local edits there can conflict on your next `git pull` (`git stash` before pulling, or
+> keep your changes in `SOUL.md` where nothing will fight them).
+
+> **One-time migration.** `SOUL.md` used to be tracked. If you customised it *before* this
+> change, copy it somewhere safe before you pull — this update removes it from git, and a
+> pull with local edits to a file being deleted will stop and ask you to resolve it. Once
+> you're past that pull, `SOUL.md` is yours permanently and no future pull can touch it.
+
+---
+
+## 🔎 Web search
+
+BMO can look things up: `weather` (Open-Meteo), `wikipedia`, and `web_search`. Search tries
+Brave first, then falls back to DuckDuckGo's instant-answer API plus Wikipedia.
+
+**Set `BRAVE_SEARCH_API_KEY` if you want search to actually work.** The free tier is ~2,000
+queries/month ([brave.com/search/api](https://brave.com/search/api/)). Without it the
+fallback handles encyclopedic questions well, but is misleading on anything current or
+local — asking for *"best pizza in Boston 2025"* returns the Wikipedia article for the 2025
+Boston Pizza Cup, a curling championship in Alberta. BMO is told to say when a result
+doesn't answer the question, and the provenance badge shows you when a lookup came back
+empty, but a real search key is the actual fix.
 
 ---
 
@@ -440,7 +489,7 @@ Make BMO yours by editing **`SOUL.md`** — personality, voice, and tool rules a
 | Start BMO (and Ollama if needed) | `./wake-bmo.sh` |
 | Stop BMO | `pkill -f "uvicorn server:app"` |
 | Check status | `pgrep -fl "uvicorn server:app"` |
-| Health check | `curl -H "Authorization: Bearer $VITE_BMO_API_KEY" localhost:18789/v1/health` |
+| Health check | `curl -H "Authorization: Bearer $BMO_MASTER_TOKEN" localhost:18789/v1/health` |
 | Rebuild web UI | `npm run build` |
 | Frontend dev server | `npm run dev -- --host` |
 | Lint | `npm run lint` |
@@ -472,9 +521,10 @@ You'll be asked for permission once, after your first login.
 
 ### Swappable souls
 
-The personality lives in one file. `SOUL.md` is 144 lines of voice, rules, and directives,
-loaded at a single call site and injected into every prompt — which means the character is
-already a swappable component, it just isn't swappable *yet*. The plan is a `souls/`
+The personality lives in one file. `SOUL.md` is ~50 lines of pure voice and character —
+the tool protocol was split out into `AGENTS.md` precisely so a soul stays a soul — loaded
+at a single call site and injected into every prompt. The character is already a swappable
+component, it just isn't swappable *yet*. The plan is a `souls/`
 directory and a picker in Settings, so the same engine can wear a different face without
 touching the tool engine, the memory pipeline, or anything else.
 

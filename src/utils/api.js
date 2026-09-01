@@ -18,9 +18,20 @@ export const getApiUrl = () => {
   return 'http://localhost:18789';
 };
 
-// A device token earned by pairing beats the build-time shared key. The shared key
-// stays as the fallback so an existing install keeps working before it's paired —
-// and so a server with BMO_SHARED_TOKEN=on still accepts it.
+// The per-device pairing token is the ONLY credential this bundle carries, and it is
+// earned at runtime — never baked in at build time.
+//
+// There used to be an `import.meta.env.VITE_BMO_API_KEY` fallback here so a fresh
+// install worked before pairing. That convenience was a critical hole: Vite inlines
+// VITE_-prefixed vars as plaintext, server.py serves dist/assets with no auth, and
+// wake-bmo.sh binds 0.0.0.0 by default. Anyone who could reach the port could GET the
+// JS bundle, read the master token out of it, and use it to run shell commands on the
+// host. The same string shipped inside every APK built from this tree.
+//
+// So the bundle now holds no secret at all. An unpaired device gets 401s and drops to
+// PairingScreen, which is the intended first-run path. The server still accepts the
+// shared token (BMO_SHARED_TOKEN=on) for break-glass curl access — that token just
+// never travels to the client any more.
 export const DEVICE_TOKEN_KEY = 'bmo_device_token';
 
 export const getDeviceToken = () => {
@@ -34,4 +45,4 @@ export const setDeviceToken = (token) => {
   else localStorage.removeItem(DEVICE_TOKEN_KEY);
 };
 
-export const getApiToken = () => getDeviceToken() || import.meta.env.VITE_BMO_API_KEY || '';
+export const getApiToken = () => getDeviceToken();

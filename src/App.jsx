@@ -200,7 +200,7 @@ const fetchGemini = async (command, image = null, file = null, history = []) => 
   }
 };
 
-const sendLocalBmoCommand = async (command, history = [], image = null, file = null, model = "", onStatusUpdate = null, onPendingApproval = null) => {
+const sendLocalBmoCommand = async (command, history = [], image = null, file = null, model = "", onStatusUpdate = null, onPendingApproval = null, onTools = null) => {
   const apiUrl = getApiUrl();
   const apiToken = getApiToken();
   const nc = typeof command === 'string' ? command.trim() : '';
@@ -272,6 +272,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
       });
       if (bmoRes.ok) {
         const data = await bmoRes.json();
+        onTools?.(data.bmo_tools || []);
         return data.choices?.[0]?.message?.content || null;
       }
     } catch (e) {
@@ -337,6 +338,7 @@ DIRECTIVE FOR BMO: The visual report above was generated automatically by your i
     });
     if (res.ok) {
       const data = await res.json();
+      onTools?.(data.bmo_tools || []);
       return data.choices?.[0]?.message?.content || null;
     }
   } catch (error) {
@@ -371,7 +373,7 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
     { role: 'user', content: command || 'Please help with my request.' }
   ];
 
-  let finalText = null, finalEmotion = null;
+  let finalText = null, finalEmotion = null, finalTools = [], finalPreamble = '';
   let lastSentinelDiff = null;
   // Guardian Protocol approval prompts arrive as a push over the shared /v1/ws socket
   // (see utils/bmoSocket.js) instead of a 600ms poll — thinking-status text doesn't need
@@ -390,7 +392,7 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiToken}` },
       body: JSON.stringify({ model: model || "", messages: msgs })
     });
-    if (!res.ok || !res.body) return { text: null, emotion: null };
+    if (!res.ok || !res.body) return { text: null, emotion: null, tools: [], preamble: '' };
 
     const handleEvent = (obj) => {
       switch (obj.type) {
@@ -399,7 +401,7 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
         case 'thinking': onThinking?.(obj.text); break;
         case 'status': onStatus?.(`⚡ ${obj.text}`); break;
         case 'gated': onStatus?.('⚡ BMO IS REACHING FOR A TOOL...'); onGated?.(); break;
-        case 'done': finalText = obj.text; break;
+        case 'done': finalText = obj.text; finalTools = obj.tools || []; finalPreamble = obj.preamble || ''; break;
         case 'error': console.error('Stream error:', obj.message); break;
       }
     };
@@ -426,7 +428,7 @@ const streamLocalBmoCommand = async (command, history = [], model = "", callback
     unsubscribeApproval?.();
   }
 
-  return { text: finalText, emotion: finalEmotion };
+  return { text: finalText, emotion: finalEmotion, tools: finalTools, preamble: finalPreamble };
 };
 
 
@@ -616,8 +618,12 @@ export default function App() {
       // /v1/health is unauthenticated, so it can't tell us whether our token is good.
       // /v1/models is behind get_token, which makes it the cheap "are we still allowed
       // in?" probe that surfaces an unpaired/revoked device.
+      // 401 or 403: FastAPI's HTTPBearer returns 401 for a missing/empty credential on
+      // current versions, but returned 403 before ~0.140 and requirements.txt only floors
+      // at >=0.135. Accepting both means a fresh install that resolves an older FastAPI
+      // still reaches the pairing screen instead of silently locking the user out.
       fetch(`${apiUrl}/v1/models`, { headers: { "Authorization": `Bearer ${apiToken}` } })
-        .then(r => setNeedsPairing(r.status === 401))
+        .then(r => setNeedsPairing(r.status === 401 || r.status === 403))
         .catch(() => { /* offline is handled by the health check below */ });
 
       const res = await fetch(`${apiUrl}/v1/health`, { headers: { "Authorization": `Bearer ${apiToken}` } });
@@ -994,7 +1000,7 @@ export default function App() {
       }]);
     };
 
-    let emotion = null, cleanText, thinkingText = '';
+    let emotion = null, cleanText, thinkingText = '', toolsUsed = [], preamble = '';
     if (activeBrain === 'gemini') {
       const fh = cam.slice(-6).map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text || (m.type === 'image' ? '[User sent an image]' : '[User sent a file]') }] }));
       const brt = await fetchGemini(ci, cim, cf, fh);
@@ -1042,12 +1048,14 @@ export default function App() {
       setStreamingThinking('');
       cleanText = result.text || "BMO is computing... If there is no reply, please check local server link!";
       emotion = result.emotion;
+      toolsUsed = result.tools || [];
+      preamble = result.preamble || '';
       // Capped before it ever reaches localStorage — reasoning can run to thousands of
       // tokens per turn and localStorage's persist guard (see bmo_messages effect above)
       // only drops the whole write on quota failure, it doesn't evict to make room.
       thinkingText = thinkAccum.length > 4000 ? `${thinkAccum.slice(0, 4000)}\n\n[...truncated]` : thinkAccum;
     } else {
-      const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel, (msg) => setThinkingStatus(msg), onPendingApproval);
+      const res = await sendLocalBmoCommand(ci, cam.slice(-6), cim, cf, activeModel, (msg) => setThinkingStatus(msg), onPendingApproval, (t) => { toolsUsed = t; });
       const brt = res || "[face:happy] BMO is computing... If there is no reply, please check local server link!";
       ({ emotion, cleanText } = parseBmoEmotion(brt));
     }
@@ -1058,7 +1066,11 @@ export default function App() {
 
     setIsLoading(false); setIsHappy(true); isSendingRef.current = false;
     const bmi = newLocalId();
-    const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText, thinking: thinkingText || undefined };
+    // tools: what actually ran this turn, straight from the server's dispatcher. Lets the
+    // message say "checked Wikipedia" instead of leaving the user to guess whether BMO
+    // looked anything up or answered from memory. Undefined when nothing ran, so old
+    // messages already in localStorage render unchanged.
+    const bmsg = { id: bmi, chatId: activeChatId, user: currentUser, sender: 'bmo', type: 'text', text: cleanText, thinking: thinkingText || undefined, tools: toolsUsed.length ? toolsUsed : undefined, preamble: preamble || undefined };
     setMessages(prev => {
       const next = [...prev, bmsg];
       // Persist after every exchange. This used to only run on new/clear chat, so the

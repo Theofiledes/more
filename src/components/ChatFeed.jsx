@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, FileText, Image as ImageIcon, StopCircle, Brain } from 'lucide-react';
+import { Play, FileText, Image as ImageIcon, StopCircle, Brain, Globe, BookOpen, CloudSun, Terminal, FileCode, Users, AlertTriangle, HelpCircle } from 'lucide-react';
 
 const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken }) => {
   const [expandedToolId, setExpandedToolId] = useState(null);
@@ -43,6 +43,53 @@ const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, set
     }
     return null;
   };
+
+  /* Provenance badges — "did BMO look this up, or make it up?"
+   *
+   * Distinct from the TOOL trace badge above, which REPLACES the message body when a
+   * whole reply is a raw tool-call JSON. These sit alongside normal prose, on the final
+   * answer, and say which tools actually ran to produce it. msg.tools comes from the
+   * server's dispatcher (server.py describe_tool_call), so it reports what really
+   * executed rather than what the model claims it did.
+   */
+  const TOOL_ICONS = {
+    web_search: Globe,
+    wikipedia: BookOpen,
+    weather: CloudSun,
+    run_command: Terminal,
+    read_file: FileCode,
+    write_file: FileCode,
+    spawn_agent: Users,
+  };
+
+  const ProvenanceBadges = ({ tools }) => (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {tools.map((t, i) => {
+        // Three states, not two: a tool that worked, a tool that came back empty, and
+        // no tool at all on a question that wanted one. The third is the whole point —
+        // without it, "no badge" and "not verified" look identical.
+        const Icon = t.unverified ? HelpCircle : t.ok ? (TOOL_ICONS[t.tool] || Terminal) : AlertTriangle;
+        const text = t.ok || t.unverified ? t.label : `${t.label} — nothing found`;
+        return (
+          <span
+            key={`${t.tool}-${i}`}
+            title={t.unverified
+              ? 'BMO answered from its own knowledge. Nothing was looked up, so this is not verified.'
+              : t.detail ? `${t.label}: ${t.detail}` : t.label}
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[7px] font-mono uppercase ${
+              t.ok
+                ? 'border-[#2d482e]/40 bg-[#1a2e1d] text-[#8fae82]'
+                : 'border-amber-700/50 bg-[#2e2a1a] text-amber-400'
+            }`}
+          >
+            <Icon size={8} />
+            {text}
+            {t.detail && <span className="opacity-60 normal-case truncate max-w-[90px]">{t.detail}</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
 
   const DiffViewer = ({ diff, onApprove, onReject }) => (
     <div className="mt-2 flex flex-col gap-2 w-full">
@@ -177,8 +224,19 @@ const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, set
                     </div>
                   )}
                   
+                  {/* What BMO said before it reached for a tool ("I'll check the
+                      forecast!"). Dimmed and set above a hairline so it reads as the
+                      lead-in it was, not as part of the answer — the badges below the
+                      bubble then show which tool actually ran in between. */}
+                  {msg.sender === 'bmo' && msg.preamble && (
+                    <p className="leading-relaxed italic opacity-70 mb-1.5 pb-1.5 border-b border-white/20"
+                       style={{ wordBreak: 'break-word' }}>
+                      {msg.preamble}
+                    </p>
+                  )}
                   {msg.text && <p className="leading-relaxed" style={{ wordBreak: 'break-word' }}>{msg.text}</p>}
                 </div>
+                {msg.sender === 'bmo' && msg.tools?.length > 0 && <ProvenanceBadges tools={msg.tools} />}
                 </>
               )}
 

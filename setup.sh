@@ -155,8 +155,8 @@ if [ -f .env ]; then
     ok ".env already exists — left untouched"
     # -E, not a BRE with \+: that's a GNU extension, and BSD grep (macOS) reads it as a
     # literal plus, so the check would silently never fire and a blank token go unwarned.
-    if ! grep -qE '^VITE_BMO_API_KEY=.+' .env; then
-        warn "but VITE_BMO_API_KEY looks empty. BMO will refuse to start."
+    if ! grep -qE '^(BMO_MASTER_TOKEN|API_TOKEN|VITE_BMO_API_KEY)=.+' .env; then
+        warn "but BMO_MASTER_TOKEN looks empty. BMO will refuse to start."
         info "fix: put a random secret on that line (python3 -c \"import secrets;print(secrets.token_urlsafe(32))\")"
     fi
 else
@@ -164,8 +164,8 @@ else
     python3 - <<'PY' || exit 1
 import pathlib, re, secrets
 env = pathlib.Path(".env")
-env.write_text(re.sub(r"(?m)^VITE_BMO_API_KEY=.*$",
-                      "VITE_BMO_API_KEY=" + secrets.token_urlsafe(32),
+env.write_text(re.sub(r"(?m)^BMO_MASTER_TOKEN=.*$",
+                      "BMO_MASTER_TOKEN=" + secrets.token_urlsafe(32),
                       env.read_text()))
 PY
     ok "created .env with a fresh API token"
