@@ -41,9 +41,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The APK bakes in VITE_ vars at build time, so this build deliberately carries no
-      # key or server address. Whoever installs it sets the server in Settings and pairs
-      # the device — shipping a build with someone's token compiled in would be a leak.
+      # This build carries no key and no server address — and neither does any other,
+      # since the auth token was moved out of the client bundle entirely and devices
+      # authenticate by pairing instead. Whoever installs it sets the server in Settings
+      # and pairs the device. Any VITE_-prefixed var is still inlined in plaintext at
+      # build time, so nothing secret may ever be read through one.
       - name: Build web assets
         run: npm run build
 

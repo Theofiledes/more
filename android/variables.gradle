@@ -1,6 +1,12 @@
 ext {
     minSdkVersion = 23
-    compileSdkVersion = 35
+    // compileSdk 36 while targetSdk stays 35 — deliberately split.
+    // @capgo/capacitor-updater pulls okhttp-android 5.4.0, whose AAR metadata refuses to
+    // link against anything below API 36, so the build fails outright on 35. Raising
+    // compileSdk only lets us compile against the newer APIs; raising targetSdk is what
+    // opts the app into new runtime behaviour, and that is a separate decision with its
+    // own testing, so it is left alone.
+    compileSdkVersion = 36
     targetSdkVersion = 35
     androidxActivityVersion = '1.9.2'
     androidxAppCompatVersion = '1.7.0'
