@@ -5,6 +5,17 @@
   "plugins": {
     "CapacitorHttp": {
       "enabled": true
+    },
+    "CapacitorUpdater": {
+      "autoUpdate": true,
+      "appReadyTimeout": 20000,
+      "responseTimeout": 20,
+      "allowModifyUrl": true,
+      "persistCustomUrls": true,
+      "directUpdate": false,
+      "updateUrl": "",
+      "channelUrl": "",
+      "statsUrl": ""
     }
   }
 }

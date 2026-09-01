@@ -466,6 +466,60 @@ project's.
 
 ---
 
+## 📦 Live updates (no APK rebuild)
+
+The Android app is a WebView around the same `dist/` bundle the server already serves, so
+after the first install **your host is the update server**:
+
+```bash
+git pull && npm run build      # that's the whole release
+```
+
+The app checks in on launch, sees a different bundle, downloads it and swaps it in. No
+side-loading, no reinstall, no losing your paired device or chat history.
+
+```mermaid
+flowchart LR
+  A["git pull<br/>npm run build"] --> B["dist/ changes"]
+  B --> C["POST /v1/updates/check<br/>content hash differs?"]
+  C -->|"yes"| D["download zip<br/>verify SHA-256"]
+  C -->|"no"| E["nothing to do"]
+  D --> F["swap in on next launch"]
+```
+
+**What still needs a real APK:** native changes only — a new Capacitor plugin, an Android
+permission, an app-icon or shell change. Pure UI, styling and frontend logic ship over the
+air.
+
+Details worth knowing:
+
+- **Self-hosted, not a cloud service.** `@capgo/capacitor-updater` defaults to Capgo's
+  servers; this points `updateUrl` at *your* server at runtime, using the address in
+  **Settings → Server Address**, and blanks `statsUrl` so nothing phones home. The same
+  APK therefore works against anybody's server — nothing is compiled in.
+- **The version is a content hash of `dist/`** (`7.4.0-a1b2c3d4`), so a rebuild that
+  changes nothing offers no update, and reverting a change returns to the exact same id.
+- **A broken bundle rolls itself back.** The app must call `notifyAppReady()` within
+  `appReadyTimeout`; if a bad bundle white-screens, the plugin restores the previous one
+  on its own — no USB cable required.
+- **The update endpoints are unauthenticated**, exactly like `/assets`: they serve the
+  compiled web bundle, which carries no secret (see [Security](#-security)). Anyone who
+  can already fetch `/assets/index-*.js` can fetch the identical bytes here.
+- `GET /v1/updates/current` (authenticated) reports what your server would hand out —
+  handy for confirming a release actually landed.
+
+**Two things to expect on a fresh install**, so neither looks like a bug:
+
+1. **Set Settings → Server Address first.** Until you do, the app's API address defaults to
+   `localhost`, which on a phone means the phone itself — so update checks go nowhere.
+   Pair the device, set the address, and the OTA path is live. It persists from then on.
+2. **The first check downloads a bundle the app already has.** The APK's built-in bundle
+   reports its native version (`7.4.0`), not the content hash (`7.4.0-a1b2c3d4`), so the
+   server sees a mismatch and offers the identical bytes once. ~160 KB, one time, then it
+   settles.
+
+---
+
 ## 🔎 Web search
 
 BMO can look things up: `weather` (Open-Meteo), `wikipedia`, and `web_search`. Search tries

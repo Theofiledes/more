@@ -5,6 +5,7 @@ import './index.css'
 import './App.css'
 import * as Sentry from "@sentry/capacitor";
 import * as SentryReact from "@sentry/react";
+import { initLiveUpdates } from './utils/liveUpdate';
 
 // No DSN by default — Sentry only activates if you set one up and configure it here.
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
@@ -32,3 +33,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>,
 )
+
+// After render, so notifyAppReady() only fires once the UI has actually mounted —
+// that is the signal the updater's rollback watchdog is waiting for.
+initLiveUpdates();

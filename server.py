@@ -52,6 +52,7 @@ def get_whisper_model():
         _whisper_model = WhisperModel(size, device="cpu", compute_type="int8")
     return _whisper_model
 
+import zipfile
 from memory_manager import memory_manager
 from device_auth import device_auth, PAIRING_CODE_TTL_SECONDS
 
@@ -2714,6 +2715,141 @@ async def metrics_broadcaster():
             "context_percent": last_context_metrics["context_percent"],
             "active_messages": last_context_metrics["active_messages"],
         }))
+
+# ============================================================================
+# OTA WEB-BUNDLE UPDATES  (self-hosted @capgo/capacitor-updater)
+#
+# The Android app is a WebView around the same `dist/` bundle the server already
+# serves. Without this, changing one line of UI meant rebuilding and side-loading a
+# whole APK. With it, `git pull && npm run build` on the host is the update: the app
+# checks in, sees a different bundle, downloads it, and swaps it in on next launch.
+# Only native changes — a new Capacitor plugin, a permission, the Android shell —
+# still need a real APK.
+#
+# Self-hosted on purpose. The plugin's defaults point at Capgo's cloud; `updateUrl`
+# is repointed at YOUR server at runtime (src/utils/liveUpdate.js) using the address
+# already configured in Settings, and `statsUrl` is blanked so nothing phones home.
+#
+# These two endpoints are deliberately UNAUTHENTICATED, for the same reason
+# `/assets` is: they serve the compiled web bundle, which since the token fix
+# carries no secret whatsoever. Anyone who can already GET /assets/index-*.js can
+# get the identical bytes here. Do not put anything in `dist/` you wouldn't serve
+# to an unauthenticated caller — that was true before this endpoint existed.
+# ============================================================================
+WEB_BUNDLE_DIR = os.path.join(WORKSPACE_DIR, "dist")
+WEB_BUNDLE_CACHE = os.path.join(WORKSPACE_DIR, ".webbundles")
+_bundle_cache = {"version": None, "zip_path": None, "checksum": None}
+
+def _read_app_version() -> str:
+    """package.json's version, so a bundle id reads like 7.4.0-a1b2c3d4."""
+    try:
+        with open(os.path.join(WORKSPACE_DIR, "package.json"), "r", encoding="utf-8") as f:
+            return str(json.load(f).get("version") or "0.0.0")
+    except Exception:
+        return "0.0.0"
+
+def _walk_bundle_files():
+    for root, _dirs, files in os.walk(WEB_BUNDLE_DIR):
+        for name in sorted(files):
+            full = os.path.join(root, name)
+            yield full, os.path.relpath(full, WEB_BUNDLE_DIR).replace(os.sep, "/")
+
+def compute_bundle_version() -> str:
+    """Content hash of dist/, so any rebuild that changes a byte is a new version.
+
+    Hashing content rather than mtimes on purpose: `npm run build` rewrites every
+    file every time, so an mtime-based id would hand the phone a fresh 'update' after
+    a no-op rebuild and re-download the same bytes."""
+    h = hashlib.sha256()
+    for full, rel in _walk_bundle_files():
+        h.update(rel.encode("utf-8"))
+        with open(full, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+    return f"{_read_app_version()}-{h.hexdigest()[:8]}"
+
+def ensure_bundle_zip():
+    """Zip dist/ (flat — index.html at the root, which is what the plugin expects)
+    and return {version, zip_path, checksum}. Cached until the content changes."""
+    if not os.path.isdir(WEB_BUNDLE_DIR):
+        return None
+    version = compute_bundle_version()
+    if _bundle_cache["version"] == version and os.path.exists(_bundle_cache["zip_path"] or ""):
+        return dict(_bundle_cache)
+
+    os.makedirs(WEB_BUNDLE_CACHE, exist_ok=True)
+    zip_path = os.path.join(WEB_BUNDLE_CACHE, f"{version}.zip")
+    if not os.path.exists(zip_path):
+        tmp = zip_path + ".partial"
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for full, rel in _walk_bundle_files():
+                zf.write(full, rel)
+        os.replace(tmp, zip_path)  # never leave a half-written zip at the real name
+
+    h = hashlib.sha256()
+    with open(zip_path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+
+    _bundle_cache.update({"version": version, "zip_path": zip_path, "checksum": h.hexdigest()})
+
+    # Keep only the current zip; every superseded build is dead weight.
+    for stale in os.listdir(WEB_BUNDLE_CACHE):
+        if stale != os.path.basename(zip_path):
+            try:
+                os.remove(os.path.join(WEB_BUNDLE_CACHE, stale))
+            except OSError:
+                pass
+    return dict(_bundle_cache)
+
+@app.post("/v1/updates/check")
+async def updates_check(request: Request):
+    """Update check for the Android app. The plugin POSTs its device/bundle info;
+    we answer with a download when our bundle differs from the one it is running.
+
+    The comparison is made HERE rather than left to the plugin: it decides by
+    string-comparing whatever we return against its own bundle id, and answering
+    'no update' explicitly is the unambiguous way to say nothing changed."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    info = ensure_bundle_zip()
+    if not info:
+        return {"message": "No web bundle built on this server yet."}
+
+    device_version = str(body.get("version_name") or "")
+    if device_version == info["version"]:
+        return {"message": "No update available"}
+
+    base = str(request.base_url).rstrip("/")
+    await broadcast_to_managers(
+        f"\u001b[36m[UPDATE] Offering web bundle {info['version']} "
+        f"(device has {device_version or 'unknown'}).\u001b[0m")
+    return {
+        "version": info["version"],
+        "url": f"{base}/v1/updates/bundle/{info['version']}.zip",
+        "checksum": info["checksum"],
+    }
+
+@app.get("/v1/updates/bundle/{filename}")
+async def updates_bundle(filename: str):
+    """Serve the current web bundle zip. Only the current version is downloadable —
+    the name is checked against it rather than joined onto a path, so this cannot be
+    walked into an arbitrary file."""
+    info = ensure_bundle_zip()
+    if not info or filename != f"{info['version']}.zip":
+        raise HTTPException(status_code=404, detail="Unknown or superseded bundle.")
+    return FileResponse(info["zip_path"], media_type="application/zip", filename=filename)
+
+@app.get("/v1/updates/current")
+async def updates_current(token: str = Depends(get_token)):
+    """What this server would hand out. Handy for checking a release landed."""
+    info = ensure_bundle_zip()
+    if not info:
+        return {"version": None, "message": "No dist/ build on this server."}
+    return {"version": info["version"], "checksum": info["checksum"],
+            "size_bytes": os.path.getsize(info["zip_path"])}
 
 # MOUNT UI (Must be last)
 if os.path.exists("dist"):

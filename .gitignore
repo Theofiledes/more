@@ -52,6 +52,9 @@ history.json
 memory.db
 runtime_state.json
 
+# Cached OTA web-bundle zips, rebuilt from dist/ on demand (see /v1/updates/check).
+.webbundles/
+
 # Piper voice models are large and optional — see public/voices/README.md
 public/voices/*.onnx
 public/voices/*.onnx.json
