@@ -7,7 +7,6 @@ import Settings, { APP_VERSION } from './components/Settings';
 import PairingScreen from './components/PairingScreen';
 import ServerAddressField from './components/ServerAddressField';
 import { notify, appIsBackgrounded, ensureNotificationPermission } from './utils/notifications';
-import Playbook from './components/Playbook';
 import WorkspaceEditor from './components/WorkspaceEditor';
 import OnboardingModal from './components/OnboardingModal';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -1391,7 +1390,6 @@ export default function App() {
             <div className="flex-[2] min-h-0 border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-inner">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
               <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} onReplayTutorial={() => setIsOnboardingOpen(true)} />
-              <Playbook onRunMacro={(p) => { playClick(); setInputText(p); }} />
               <div className="mt-4 p-4 bg-[#b5d6a7] border-4 border-[#2d482e] rounded-[12px] bmo-font text-[#2d482e] text-[8px] flex justify-between items-center shadow-lg">
                 <span>SYSTEM STATUS: OPERATIONAL</span><span>PIXEL_FOLD_V2</span>
               </div>
@@ -1413,7 +1411,6 @@ export default function App() {
               </div>
               <div className="h-[300px] border-4 border-[#2d482e] rounded-xl overflow-hidden shadow-2xl">{activeDashboardTab === 'telemetry' ? <TelemetryTerminal /> : <WorkspaceEditor />}</div>
               <Settings activeModel={activeModel} setActiveModel={setActiveModel} safetyStride={safetyStride} setSafetyStride={setSafetyStride} isDreaming={isDreaming} setIsDreaming={setIsDreaming} autoSpeak={autoSpeak} setAutoSpeak={setAutoSpeak} autoHideKeyboard={autoHideKeyboard} setAutoHideKeyboard={setAutoHideKeyboard} voiceRate={voiceRate} setVoiceRate={setVoiceRate} voicePitch={voicePitch} setVoicePitch={setVoicePitch} sfxEnabled={sfxEnabled} setSfxEnabled={setSfxEnabled} tts={tts} currentUser={currentUser} systemHealth={systemHealth} getApiUrl={getApiUrl} getApiToken={getApiToken} onReplayTutorial={() => setIsOnboardingOpen(true)} />
-              <Playbook onRunMacro={(p) => { playClick(); setInputText(p); setIsDashboardOverlayOpen(false); }} />
             </div>
           </div>
         )}

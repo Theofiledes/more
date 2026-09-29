@@ -26,7 +26,7 @@ const STEPS = [
             <span className="bg-[#ffcc00] text-[#2d482e] px-1.5 py-0.5 rounded text-[8px] font-bold">2</span>
             <div className="text-[9px] text-[#2d482e]">
               <strong className="block">CYBER-ENGINEER MODE</strong>
-              Real-time telemetry, automated macro playbooks, live workspace editing, and backend system control.
+              Real-time telemetry, live workspace editing, and backend system control.
             </div>
           </div>
         </div>
