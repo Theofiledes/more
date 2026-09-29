@@ -121,14 +121,20 @@ async def main():
     ap.add_argument("--runs", type=int, default=1)
     ap.add_argument("--only", default=None, help="substring filter on prompts")
     ap.add_argument("--temperature", type=float, default=None)
+    ap.add_argument("--soul", default=None, help="score against this SOUL.md instead of the live one")
     ap.add_argument("--agents", default=None, help="score against this AGENTS.md instead of the live one")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
+    overrides = {}
     if args.agents:
-        override, real_get = open(args.agents).read(), server.memory_manager.get_workspace_file
+        overrides["AGENTS.md"] = open(args.agents).read()
+    if args.soul:
+        overrides["SOUL.md"] = open(args.soul).read()
+    if overrides:
+        real_get = server.memory_manager.get_workspace_file
         server.memory_manager.get_workspace_file = (
-            lambda name, *a, **k: override if name == "AGENTS.md" else real_get(name, *a, **k))
+            lambda name, *a, **k: overrides[name] if name in overrides else real_get(name, *a, **k))
 
     model = args.model or server.get_available_model()
     system = server.build_system_prompt()
