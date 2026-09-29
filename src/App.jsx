@@ -1219,7 +1219,7 @@ export default function App() {
                   </div>
                 </header>
                 <div
-                  className={`shrink-0 relative flex items-center justify-center bg-[#b5d6a7] border-b-2 border-dashed border-[#2d482e]/30 overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none ${
+                  className={`shrink-0 max-h-[40%] relative flex items-center justify-center bg-[#b5d6a7] border-b-2 border-dashed border-[#2d482e]/30 overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none ${
                     compactViewport
                       ? 'h-[56px]'
                       : !isAuthenticated || isServerSleeping || isHeroFace ? 'h-[190px] sm:h-[220px] lg:h-[280px]' : 'h-[92px] sm:h-[104px] lg:h-[160px]'
