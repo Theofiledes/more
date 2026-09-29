@@ -15,6 +15,13 @@ export const getApiUrl = () => {
   }
   const envUrl = import.meta.env.VITE_BMO_API_URL;
   if (envUrl) return envUrl.replace(/\/$/, '');
+  // A browser that loaded the bundle from server.py is already talking to BMO — use that
+  // origin, so a non-default BMO_PORT (or a LAN address) works without Settings. Not in
+  // the native app (its origin is the app shell) or the Vite dev server (no API there).
+  if (typeof window !== 'undefined' && !window.Capacitor?.isNativePlatform?.()
+      && !import.meta.env.DEV && /^https?:$/.test(window.location.protocol)) {
+    return window.location.origin;
+  }
   return 'http://localhost:18789';
 };
 
