@@ -574,6 +574,73 @@ async def duckduckgo_instant(query: str):
         print(f"[SEARCH] DDG failed: {e}", flush=True)
         return None
 
+# The Adventure Time fan wiki knows the show far better than Wikipedia does — every
+# character, episode and bit of lore in Ooo. It's a MediaWiki too, but Fandom doesn't
+# offer Wikipedia's plain-text summaries (no TextExtracts, and its REST API sits behind
+# a Cloudflare challenge), so this reads the article's intro as wikitext and strips it.
+FANDOM_AT_API = "https://adventuretime.fandom.com/api.php"
+
+def clean_wikitext(text: str) -> str:
+    for _ in range(6):  # templates and tables nest; peel innermost first until stable
+        stripped = re.sub(r"\{\{[^{}]*\}\}", "", text)
+        stripped = re.sub(r"\{\|[^{}]*?\|\}", "", stripped, flags=re.S)
+        if stripped == text:
+            break
+        text = stripped
+    text = re.sub(r"<ref[^>]*/>|<ref[^>]*>.*?</ref>", "", text, flags=re.S)
+    text = re.sub(r"\[\[(?:File|Image|Category):[^\]]*\]\]", "", text, flags=re.I)
+    text = re.sub(r"\[\[[a-z]{2,3}(?:-[a-z]+)?:[^\]]*\]\]", "", text)  # interlanguage links
+    text = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", text)
+    text = re.sub(r"\[https?://\S+ ([^\]]*)\]", r"\1", text)
+    text = re.sub(r"<[^>]+>|'{2,}|__\w+__", "", text)
+    text = re.sub(r"^[=*#:;].*$", "", text, flags=re.M)
+    return re.sub(r"\s+", " ", text).strip()
+
+async def adventure_time_wiki_lookup(query: str, sentences: int = 4):
+    """Best-matching Adventure Time wiki article, as {"title", "extract", "url"}, or None."""
+    if not query.strip():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15.0, headers=WIKI_UA, follow_redirects=True) as client:
+            # An exact title (or a redirect to one) beats search, whose ranking put
+            # "Bonnibel Bubblegum (Vampire World)" above "Princess Bubblegum".
+            r = await client.get(FANDOM_AT_API, params={
+                "action": "query", "titles": query.strip().title(), "redirects": 1, "format": "json"})
+            page = next(iter(r.json().get("query", {}).get("pages", {}).values()), {}) if r.is_success else {}
+            title = page.get("title") if page.get("pageid") and "missing" not in page else None
+            if not title or "(disambiguation)" in title:
+                r = await client.get(FANDOM_AT_API, params={
+                    "action": "query", "list": "search", "srsearch": query, "srlimit": 6, "format": "json"})
+                hits = [h["title"] for h in r.json().get("query", {}).get("search", [])
+                        if "(disambiguation)" not in h["title"]] if r.is_success else []
+                if not hits:
+                    return None
+                # Search ranking is poor, so only trust hits whose base title (minus any
+                # "(...)") actually appears in the question, and among those prefer the
+                # plain or "(character)" page. The wiki splits "The Lich" into episode /
+                # character / alt-world variants; "Ice King real name" must not land on
+                # "The Winter King (character)" just because it is a character page.
+                ql = query.strip().lower()
+                base = lambda h: re.sub(r"\s*\([^)]*\)$", "", h).lower()
+                named = [h for h in hits if base(h) in ql]
+                title = (next((h for h in named if base(h) == ql and "(" not in h), None)
+                         or next((h for h in named if "(" not in h or h.endswith("(character)")), None)
+                         or (named or hits)[0])
+            r = await client.get(FANDOM_AT_API, params={
+                "action": "parse", "page": title, "prop": "wikitext", "section": 0,
+                "redirects": 1, "format": "json"})
+            if not r.is_success:
+                return None
+            text = clean_wikitext(r.json().get("parse", {}).get("wikitext", {}).get("*", ""))
+            extract = " ".join(re.split(r"(?<=[.!?])\s+", text)[:sentences])[:900].strip()
+            if not extract:
+                return None
+            return {"title": title, "extract": extract,
+                    "url": f"https://adventuretime.fandom.com/wiki/{quote(title.replace(' ', '_'))}"}
+    except Exception as e:
+        print(f"[AT WIKI] lookup failed: {e}", flush=True)
+        return None
+
 async def perform_web_search(query: str):
     """Best available answer, trying sources in order of usefulness.
 
@@ -1811,6 +1878,7 @@ _TOOL_ALIASES = {
     "create_file": "write_file", "save_file": "write_file", "write": "write_file",
     "delegate": "spawn_agent", "micro_agent": "spawn_agent",
     "search": "web_search", "wiki": "wikipedia",
+    "at_wiki": "adventure_time_wiki", "fandom": "adventure_time_wiki",
 }
 _TOOL_LABELS = {
     "run_command": "ran a command",
@@ -1819,6 +1887,7 @@ _TOOL_LABELS = {
     "spawn_agent": "delegated to an agent",
     "weather": "checked live weather",
     "wikipedia": "checked Wikipedia",
+    "adventure_time_wiki": "checked the Adventure Time wiki",
     "web_search": "searched the web",
 }
 # A tool can return a string and still have found nothing. Those read as success to a
@@ -1930,6 +1999,15 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
         else:
             output_str = (f"No Wikipedia article found for '{query}'. Say so plainly — "
                           f"do not guess an answer.")
+    elif tool_name in ["adventure_time_wiki", "at_wiki", "fandom"]:
+        query = tool_call.get("query") or tool_call.get("topic", "")
+        await broadcast_fn(f"\u001b[36m[TOOL: adventure_time_wiki] Looking up '{query}'...\u001b[0m")
+        page = await adventure_time_wiki_lookup(query)
+        if page:
+            output_str = f"Adventure Time wiki — {page['title']}: {page['extract']}\nSource: {page['url']}"
+        else:
+            output_str = (f"No Adventure Time wiki article found for '{query}'. Say so plainly — "
+                          f"do not guess an answer.")
     return output_str
 
 # ---------------------------------------------------------------------------
@@ -1965,6 +2043,9 @@ TOOL_SCHEMAS = [
           "web_search.", location="city name, e.g. Lima"),
     _tool("wikipedia", "Encyclopedic facts: a person, place, historical event or scientific "
           "concept.", query="the topic"),
+    _tool("adventure_time_wiki", "Anything about the show Adventure Time: characters, episodes, "
+          "places in Ooo, lore. The fan wiki — prefer it over wikipedia for the show.",
+          query="the topic, e.g. Princess Bubblegum"),
     _tool("web_search", "Anything current, local or not encyclopedic: news, results, versions, "
           "prices, reviews.", query="search query"),
     _tool("spawn_agent", "Delegate a task to a micro-agent from AGENTS.md section 6, by its "

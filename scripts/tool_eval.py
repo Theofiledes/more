@@ -40,6 +40,8 @@ CASES = [
     ("Write me a haiku about pizza.", set()),
     ("Look up Machu Picchu on Wikipedia for me!", {"wikipedia"}),
     ("Tell me about Ada Lovelace.", {"wikipedia", "web_search", None}),
+    ("Who is Princess Bubblegum in Adventure Time?", {"adventure_time_wiki"}),
+    ("What's the Ice King's real name?", {"adventure_time_wiki", "wikipedia"}),
     ("What's the weather in Lima right now?", {"weather"}),
     ("Is it cold in Boston today?", {"weather"}),
     ("Who won the most recent Super Bowl?", {"web_search"}),
@@ -66,6 +68,7 @@ DRAFT_TOOLS = [
     _fn("write_file", "Create or overwrite a file in BMO's workspace.", path="file path", content="full file content"),
     _fn("weather", "Live current weather for a city. Always use this for weather.", location="city name"),
     _fn("wikipedia", "Encyclopedic facts: a person, place, historical event or scientific concept.", query="topic"),
+    _fn("adventure_time_wiki", "Anything about the show Adventure Time.", query="topic"),
     _fn("web_search", "Anything current or not encyclopedic: news, versions, prices, results, reviews, local info.", query="search query"),
     _fn("spawn_agent", "Delegate a task to a micro-agent listed in AGENTS.md section 6.", agent="exact @tag", task="detailed task"),
 ]

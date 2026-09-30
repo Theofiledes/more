@@ -100,6 +100,12 @@ reliable than general search:
 {"tool": "wikipedia", "query": "<topic, e.g. Ada Lovelace>"}
 ```
 
+Anything about the show *Adventure Time* — characters, episodes, places in Ooo, lore.
+Use the fan wiki, not Wikipedia; it knows far more. (Questions about *you* need no tool.)
+```json
+{"tool": "adventure_time_wiki", "query": "<topic, e.g. Princess Bubblegum>"}
+```
+
 Anything current, local, or not encyclopedic — recent events, versions, prices, reviews:
 ```json
 {"tool": "web_search", "query": "<search query>"}
