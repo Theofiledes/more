@@ -106,8 +106,12 @@ that spills to CPU is many times slower. On a 4GB card, a 3B model at Q4 answere
 where a 9B took ~26s for the same prompt. Check with `ollama ps` after sending a message:
 if `SIZE_VRAM` is well below `SIZE`, part of it is running on the CPU.
 
-Also prefer a model that follows instructions closely. BMO reports tool results (weather,
-shell output) back to you, and some small models embellish — one tested model invented a
+Prefer a model with **native tool support** — `ollama show <model>` lists `tools` under
+*Capabilities*. BMO sends those models structured tool definitions, which measured far more
+reliable than asking for JSON in the reply (see [Tools](#-tools--web-search)); models
+without it still work through a text fallback. Also prefer a model that follows
+instructions closely. BMO reports tool results (weather, shell output) back to you, and
+some small models embellish — one tested model invented a
 kernel version rather than reporting the real one. `docs/MODEL_SEARCH_PROMPT.md` has a
 prompt for finding candidates that fit your hardware.
 
@@ -118,11 +122,15 @@ prompt for finding candidates that fit your hardware.
 ```
 
 This starts Ollama (if needed) and the BMO server, then prints your access URLs. Open the
-laptop link it gives you — it carries your token, and BMO opens straight into the chat.
-There's no login screen.
+laptop link. The first time, BMO shows a **pairing screen**: enter the pairing code printed
+in the server window (`server.log` if you started it in the background — codes last 15
+minutes, and a restart prints a fresh one while no device is paired yet) and give the
+device a name. After that, this browser stays paired. Pair more devices from a paired one
+(see [Security](#-security)).
 
 To run a second checkout alongside a live one (testing an upgrade, say), give it its own
-port so the two don't collide:
+port so the two don't collide. The web UI talks to whichever server served it, so the
+browser needs no extra setup:
 
 ```bash
 BMO_PORT=18790 ./wake-bmo.sh
@@ -307,7 +315,7 @@ BMO is designed for a private network, not the public internet.
        +---> [ 📼 File Cartridge ] ---> [ 💾 Scratch Cache ] -> [ 📝 Context Injector ]
        |                                (/scratch/file_*.ext)          |
        |                                                               v
-       +---> [ 🌦️ Weather/Search ] ---> [ 🌐 Open-Meteo / DDG ] ------>|
+       +---> [ 🌦️ Weather/Search ] ---> [ 🌐 Open-Meteo / Wikis / Web ] ->|
                                                                        |
                                                                        v
 ========================================================================================
@@ -370,7 +378,7 @@ flowchart TD
     A["Text prompt"] --> R
     B["Image upload"] --> S1["scratch/scratch_img_*.ext"]
     C["File cartridge"] --> S2["scratch/scratch_file_*.ext"]
-    D["Weather or search request"] --> W1["Open-Meteo, DuckDuckGo, Brave"]
+    D["Weather or search request"] --> W1["Open-Meteo, Wikipedia, AT fan wiki, Brave, DuckDuckGo"]
 
     S1 -->|"stage 1 optical analysis"| M1["Moondream local vision"]
     M1 --> R
@@ -427,9 +435,11 @@ flowchart TD
 - **Native TTS**: BMO reads replies aloud on-device, with adjustable rate and pitch.
 - **Brain Modes**: Toggle between `LOCAL BMO` (your Ollama model) and `GEM BMO` (Google Gemini Cloud) if you supply a key.
 - **Vision**: Image uploads analyzed by a local `moondream` model.
-- **Live Internet Tools**: Built-in weather (`/v1/tools/weather`) and web search (`/v1/tools/search`).
+- **Native tool calling**: Tool-capable models get structured tool definitions and call
+  them directly; others fall back to JSON in the reply. See [Tools](#-tools--web-search).
+- **Live Internet Tools**: Live weather, Wikipedia, the Adventure Time fan wiki, and web
+  search (Brave with a key, DuckDuckGo otherwise).
 - **Autonomous Tool Engine**: Shell command execution, workspace file editing, and git status tracking.
-- **Search**: Wikipedia lookups plus web search (DuckDuckGo free, or Brave with a key).
 - **Micro-agents**: One working agent (`@code_auditor`), an optional Aider integration, and
   a template to fork — see [AGENTS.md](AGENTS.md).
 - **Notifications**: BMO can notify you when it learns something or needs your approval.
@@ -520,10 +530,38 @@ Details worth knowing:
 
 ---
 
-## 🔎 Web search
+## 🔎 Tools & web search
 
-BMO can look things up: `weather` (Open-Meteo), `wikipedia`, and `web_search`. Search tries
-Brave first, then falls back to DuckDuckGo's instant-answer API plus Wikipedia.
+| Tool | What it does |
+|---|---|
+| `weather` | Live current conditions for a city (Open-Meteo). No forecasts yet. |
+| `wikipedia` | People, places, history, science. |
+| `adventure_time_wiki` | Anything about the show — characters, episodes, Ooo — from the fan wiki. |
+| `web_search` | Anything current or local. Brave first, then DuckDuckGo + Wikipedia. |
+| `run_command` | A shell command on the host, behind the Guardian approval gate. |
+| `read_file` / `write_file` | Files in BMO's workspace. |
+| `spawn_agent` | Hand a task to a micro-agent from [AGENTS.md](AGENTS.md). |
+
+**How BMO calls them.** If Ollama reports your model as tool-capable, BMO sends these as
+structured tool definitions and the model answers with a real tool call. Otherwise BMO
+falls back to asking for a JSON block in the reply (the protocol in `AGENTS.md`), which
+still works but is less reliable. Tool turns run at a low temperature so the choice of
+tool stays consistent; if chat starts to feel flat, raise it:
+
+```bash
+BMO_TOOL_TEMPERATURE=0.5   # in .env; default 0.2
+```
+
+**Measuring it.** `scripts/tool_eval.py` scores whether BMO picks the right tool — or
+correctly picks none — for a fixed set of prompts, using your real system prompt. It never
+runs a tool. Run it before and after changing `AGENTS.md`, a tool description, or the
+model:
+
+```bash
+./venv/bin/python scripts/tool_eval.py --model qwen2.5:3b --runs 5
+```
+
+On a qwen2.5:3b, native tool calling took this from 58/80 to 74/80 correct.
 
 **Set `BRAVE_SEARCH_API_KEY` if you want search to actually work.** The free tier is ~2,000
 queries/month ([brave.com/search/api](https://brave.com/search/api/)). Without it the
@@ -547,6 +585,7 @@ empty, but a real search key is the actual fix.
 | Rebuild web UI | `npm run build` |
 | Frontend dev server | `npm run dev -- --host` |
 | Lint | `npm run lint` |
+| Tool-calling eval | `./venv/bin/python scripts/tool_eval.py` |
 
 Handy shell aliases — add to `~/.bashrc` (adjust the path to your checkout):
 
@@ -598,6 +637,9 @@ built-in ones are examples, not a closed set.
 - **macOS support.** The portability fixes are in (`setsid`, `hostname -I`, BSD `grep`),
   but nothing has actually been run on a Mac yet. Reports welcome.
 - **A signed release APK.** Today's is an unsigned debug build, so Android will warn you.
+- **More tools.** Reading a web page a search result points to (with local and private
+  addresses blocked), weather forecasts, and a `remember` tool that only acts when you say
+  "remember that…". Optionally, Brave's paid Answers API for cited answers.
 
 ---
 

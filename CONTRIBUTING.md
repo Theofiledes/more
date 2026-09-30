@@ -47,13 +47,24 @@ summarized, test it against a real tool call and compare the output to what the 
 actually returned.
 
 **The context window is a shared budget.** `SOUL.md` and `AGENTS.md` together cost roughly
-960 tokens on every single message, memory facts about 30 each. Anything you add to the
+2,300 tokens on every single message, memory facts about 30 each. Anything you add to the
 system prompt is paid for on every turn, forever. Measure before adding.
 
 **`SOUL.md` is the user's; `AGENTS.md` is ours.** `SOUL.md` is gitignored and seeded from
 `SOUL.example.md`, so a user's tuned personality survives every `git pull`. That means
 changes to the tool-calling protocol belong in `AGENTS.md` — anything you put in
 `SOUL.example.md` reaches new installs only, never existing ones.
+
+**Tool calling is measured, not guessed.** Run `scripts/tool_eval.py` before and after
+any change to `AGENTS.md`, `TOOL_SCHEMAS`, a tool's description, or the default model, and
+put the numbers in the PR. Two findings to respect: dropping `AGENTS.md`'s "emit the tool
+call and nothing else" rule made small models *worse* (the soul's face-tag-first rule
+starts them chatting instead of calling the tool), and temperature moved the score more
+than wording did.
+
+**Adding a tool touches four places** in `server.py` plus one doc: a `TOOL_SCHEMAS` entry,
+a branch in `execute_tool_call()`, a `_TOOL_LABELS` entry for the badge, and a line in
+`AGENTS.md` §4 for models on the text fallback. Add an eval case for it too.
 
 **Escalation sends user data off-device.** Anything routed to the cloud leaves the user's
 machine and costs them money. It must respect `escalation_mode` — and `off` means off,
