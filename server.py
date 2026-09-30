@@ -1932,6 +1932,132 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
                           f"do not guess an answer.")
     return output_str
 
+# ---------------------------------------------------------------------------
+# Native tool calling
+#
+# Tools used to be requested only as JSON written into the reply text and fished back
+# out with extract_tool_call(). Models that support Ollama's `tools` parameter now get
+# the schemas below and answer with structured tool_calls instead. Measured with
+# scripts/tool_eval.py (BMO's real prompt, temperature 0.2): qwen2.5:3b went from 58/80
+# to 74/80 correct tool choices, ornith:9b to 32/32.
+#
+# Structured calls are converted to the same dict the text protocol produces, so
+# execute_tool_call(), describe_tool_call() and the UI badges can't tell the difference.
+# The text protocol stays as the fallback for models without tool support, and is still
+# accepted from models that have it. AGENTS.md keeps documenting it on purpose: the eval
+# showed that its "emit the call and nothing else" rule is what stops a small model
+# opening with a [face:...] tag and chatting instead of calling the tool.
+def _tool(name, description, **params):
+    return {"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {
+            "type": "object",
+            "properties": {k: {"type": "string", "description": v} for k, v in params.items()},
+            "required": list(params)}}}
+
+TOOL_SCHEMAS = [
+    _tool("run_command", "Run a bash command on this machine (git, ls, uname, scripts). "
+          "Not for arithmetic or anything you can simply answer.", cmd="the exact bash command"),
+    _tool("read_file", "Read a file in BMO's workspace.", path="file path"),
+    _tool("write_file", "Create or overwrite a file in BMO's workspace.",
+          path="file path, including the filename", content="the complete file content"),
+    _tool("weather", "Live current weather for a city. Always use this for weather, never "
+          "web_search.", location="city name, e.g. Lima"),
+    _tool("wikipedia", "Encyclopedic facts: a person, place, historical event or scientific "
+          "concept.", query="the topic"),
+    _tool("web_search", "Anything current, local or not encyclopedic: news, results, versions, "
+          "prices, reviews.", query="search query"),
+    _tool("spawn_agent", "Delegate a task to a micro-agent from AGENTS.md section 6, by its "
+          "exact @tag.", agent="the agent's @tag", task="a detailed description of the task"),
+]
+
+# Turns that may call a tool run cooler. At Ollama's default temperature the same prompt
+# picked a tool on one run and chatted on the next; 0.2 is what the numbers above were
+# measured at. Set BMO_TOOL_TEMPERATURE higher if BMO's chat starts to feel flat.
+TOOL_TURN_TEMPERATURE = float(os.getenv("BMO_TOOL_TEMPERATURE", "0.2"))
+
+_tool_support_cache: dict = {}
+
+async def model_supports_tools(model: str) -> bool:
+    """Whether Ollama reports the `tools` capability for this model. Only a real answer
+    is cached, so a blip talking to Ollama doesn't pin a model to the text protocol."""
+    if model in _tool_support_cache:
+        return _tool_support_cache[model]
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.post(f"{OLLAMA_URL}/api/show", json={"model": model})
+        if res.is_success:
+            _tool_support_cache[model] = "tools" in (res.json().get("capabilities") or [])
+            return _tool_support_cache[model]
+    except Exception:
+        pass
+    return False
+
+def tool_payload_extras(supports_tools: bool) -> dict:
+    return {"tools": TOOL_SCHEMAS, "temperature": TOOL_TURN_TEMPERATURE} if supports_tools else {}
+
+def _unwrap_arg(value):
+    # Small models sometimes echo the schema back instead of filling it in — observed
+    # from qwen2.5:3b: {"location": {"type": "string", "value": "Lima"}}.
+    if isinstance(value, dict) and "value" in value:
+        return value["value"]
+    return value
+
+def native_call_to_dict(tc: dict) -> dict:
+    """A structured tool call, in the {"tool": name, **args} shape the dispatcher takes."""
+    fn = tc.get("function") or {}
+    args = fn.get("arguments") or {}
+    if isinstance(args, str):
+        try:
+            args = json.loads(args) if args.strip() else {}
+        except json.JSONDecodeError:
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    call = {k: _unwrap_arg(v) for k, v in args.items()}
+    call["tool"] = fn.get("name") or ""
+    return call
+
+def collect_tool_calls(response_text: str, native_calls) -> list:
+    """Every tool call in one model turn, as (call_dict, raw_native_call_or_None)."""
+    if native_calls:
+        return [(native_call_to_dict(tc), tc) for tc in native_calls]
+    parsed = extract_tool_call(response_text)
+    return [(parsed, None)] if parsed else []
+
+def flatten_messages(messages: list) -> list:
+    """Text-only copy for tool follow-up turns. Image parts collapse to their text, and
+    tool_calls / tool_call_id survive — a `tool` message means nothing without them."""
+    out = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            parts = [i.get("text", "") for i in content if isinstance(i, dict) and i.get("type") == "text"]
+            content = " ".join(parts) if parts else "Attached media"
+        msg = {"role": m.get("role", "user"), "content": str(content or "")}
+        for key in ("tool_calls", "tool_call_id"):
+            if m.get(key):
+                msg[key] = m[key]
+        out.append(msg)
+    return out
+
+def append_tool_round(messages: list, response_text: str, results: list) -> list:
+    """Adds one tool round to the conversation. results: [(call, raw_native_or_None, output)].
+    Native calls get a proper assistant tool_calls message and one `tool` message each;
+    the text protocol keeps its old shape, a user turn carrying the result."""
+    native = [raw for _, raw, _ in results if raw]
+    if native:
+        messages.append({"role": "assistant", "content": str(response_text or ""), "tool_calls": native})
+        for call, raw, output in results:
+            messages.append({"role": "tool", "tool_call_id": raw.get("id", ""), "content": output or (
+                f"'{call.get('tool')}' did not run: there is no such tool, or it was called "
+                f"without its required arguments.")})
+    else:
+        messages.append({"role": "assistant", "content": str(response_text)})
+        messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{results[0][2]}\n\n"
+                         "Please proceed or summarize the result cleanly for the user."})
+    return messages
+
 @app.post("/v1/chat/completions")
 async def chat(request: Request, token: str = Depends(get_token)):
     body = await request.json()
@@ -2036,10 +2162,12 @@ async def chat(request: Request, token: str = Depends(get_token)):
             print("Vision Exception:", err_detail)
             raise HTTPException(status_code=500, detail=f"Moondream vision error: {err_detail}")
 
+    supports_tools = await model_supports_tools(target_model)
     payload = {
         "model": target_model,
         "messages": incoming_messages,
-        "stream": False
+        "stream": False,
+        **tool_payload_extras(supports_tools),
     }
 
     await broadcast_to_managers(f"\u001b[33m[BRAIN RUNNING] Model '{target_model}' processing {len(incoming_messages)} messages in VRAM...\u001b[0m")
@@ -2048,12 +2176,17 @@ async def chat(request: Request, token: str = Depends(get_token)):
         async with httpx.AsyncClient(timeout=180.0) as client:
             res = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload)
             if not res.is_success and target_model != available_model:
-                payload["model"] = available_model
+                target_model = available_model
+                supports_tools = await model_supports_tools(target_model)
+                payload = {"model": target_model, "messages": incoming_messages, "stream": False,
+                           **tool_payload_extras(supports_tools)}
                 res = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload)
         res.raise_for_status()
         res_json = res.json()
         last_res_json = res_json
-        response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+        message = res_json.get("choices", [{}])[0].get("message", {})
+        response_text = message.get("content") or ""
+        native_calls = message.get("tool_calls") or []
         await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars.\u001b[0m")
         # Autonomous Multi-Turn Tool & Micro-Agent Execution Loop (Up to 5 turns)
         turn_count = 0
@@ -2062,42 +2195,34 @@ async def chat(request: Request, token: str = Depends(get_token)):
         last_user_msg = next((m.get("content", "") for m in reversed(incoming_messages)
                               if m.get("role") == "user" and isinstance(m.get("content"), str)), "")
         while turn_count < 5:
-            tool_call = extract_tool_call(response_text)
-            if not tool_call:
+            calls = collect_tool_calls(response_text, native_calls)
+            if not calls:
                 break
-            
-            output_str = await execute_tool_call(tool_call, broadcast_to_managers)
-            tools_used.append(describe_tool_call(tool_call, output_str or ""))
-            if not output_str:
+            results = []
+            for call, raw in calls:
+                output_str = await execute_tool_call(call, broadcast_to_managers)
+                tools_used.append(describe_tool_call(call, output_str or ""))
+                results.append((call, raw, output_str))
+            # A text-protocol call that ran nothing has no result to report back. A native
+            # one still gets a `tool` message saying so, which lets the model correct itself.
+            if not native_calls and not results[0][2]:
                 break
 
-            clean_messages = []
-            for m in incoming_messages:
-                content = m.get("content")
-                if isinstance(content, list):
-                    text_parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
-                    content = " ".join(text_parts) if text_parts else "Attached media"
-                clean_messages.append({"role": m.get("role", "user"), "content": str(content or "")})
-            
-            clean_messages.append({"role": "assistant", "content": str(response_text)})
-            clean_messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{output_str}\n\nPlease proceed or summarize the result cleanly for the user."})
-            
-            incoming_messages = clean_messages
-            payload = {
-                "model": target_model,
-                "messages": incoming_messages,
-                "stream": False
-            }
-            
+            incoming_messages = append_tool_round(flatten_messages(incoming_messages), response_text, results)
+            payload = {"model": target_model, "messages": incoming_messages, "stream": False,
+                       **tool_payload_extras(supports_tools)}
+
             await broadcast_to_managers(f"\u001b[33m[BRAIN RUNNING] Model '{target_model}' processing tool turn #{turn_count + 2} in VRAM...\u001b[0m")
             async with httpx.AsyncClient(timeout=180.0) as client:
                 followup_res = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload)
             if not followup_res.is_success:
                 break
-            
+
             res_json = followup_res.json()
             last_res_json = res_json
-            response_text = res_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+            message = res_json.get("choices", [{}])[0].get("message", {})
+            response_text = message.get("content") or ""
+            native_calls = message.get("tool_calls") or []
             await broadcast_to_managers(f"\u001b[32m[BRAIN COMPLETE] Model '{target_model}' generated {len(response_text)} chars on turn #{turn_count + 2}.\u001b[0m")
             turn_count += 1
 
@@ -2123,6 +2248,8 @@ async def chat(request: Request, token: str = Depends(get_token)):
         # Emergency retry with available_model
         try:
             payload["model"] = available_model
+            payload.pop("tools", None)
+            payload.pop("temperature", None)
             async with httpx.AsyncClient(timeout=180.0) as client:
                 res = await client.post(f"{OLLAMA_URL}/v1/chat/completions", json=payload)
             res.raise_for_status()
@@ -2320,6 +2447,7 @@ async def stream_ollama_turn(payload: dict):
     stream_payload = {**payload, "stream": True}
     parts, head, decided, gated = [], "", False, False
     late_tail = ""  # short rolling window of streamed content, checked for a late fence start
+    calls = {}  # native tool calls, keyed by their stream index
     async with httpx.AsyncClient(timeout=180.0) as client:
         async with client.stream("POST", f"{OLLAMA_URL}/v1/chat/completions", json=stream_payload) as resp:
             async for line in resp.aiter_lines():
@@ -2338,6 +2466,23 @@ async def stream_ollama_turn(payload: dict):
                 reasoning_text = delta.get("reasoning") or ""
                 if reasoning_text:
                     yield {"type": "thinking", "text": reasoning_text}
+                for tc in delta.get("tool_calls") or []:
+                    key = tc.get("index", len(calls))
+                    slot = calls.get(key)
+                    if slot and tc.get("id") and slot["id"] and slot["id"] != tc["id"]:
+                        key = f"{key}:{tc['id']}"  # a second call reusing an index
+                        slot = None
+                    if slot is None:
+                        slot = calls[key] = {"id": "", "type": "function",
+                                             "function": {"name": "", "arguments": ""}}
+                    slot["id"] = tc.get("id") or slot["id"]
+                    fn = tc.get("function") or {}
+                    slot["function"]["name"] += fn.get("name") or ""
+                    args = fn.get("arguments")
+                    if isinstance(args, str):
+                        slot["function"]["arguments"] += args
+                    elif args:
+                        slot["function"]["arguments"] = json.dumps(args)
                 delta_text = delta.get("content") or ""
                 if not delta_text:
                     continue
@@ -2375,7 +2520,7 @@ async def stream_ollama_turn(payload: dict):
             yield {"type": "gated"}
         elif body_str:
             yield {"type": "delta", "text": body_str}
-    yield {"type": "_done", "text": text}
+    yield {"type": "_done", "text": text, "tool_calls": list(calls.values())}
 
 @app.post("/v1/chat/stream")
 async def chat_stream(request: Request, token: str = Depends(get_token)):
@@ -2388,11 +2533,13 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
         nonlocal incoming_messages
         executor.current_task = "THINKING"
         try:
-            payload = {"model": target_model, "messages": incoming_messages}
-            response_text = ""
+            supports_tools = await model_supports_tools(target_model)
+            extras = tool_payload_extras(supports_tools)
+            payload = {"model": target_model, "messages": incoming_messages, **extras}
+            response_text, native_calls = "", []
             async for evt in stream_ollama_turn(payload):
                 if evt["type"] == "_done":
-                    response_text = evt["text"]
+                    response_text, native_calls = evt["text"], evt["tool_calls"]
                 else:
                     yield sse(evt)
 
@@ -2412,22 +2559,31 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
             # doesn't. See claims_action_without_doing().
             last_user_msg = next((m.get("content", "") for m in reversed(incoming_messages)
                                   if m.get("role") == "user" and isinstance(m.get("content"), str)), "")
-            if claims_action_without_doing(response_text) or (
-                    user_requested_tool_action(last_user_msg) and not extract_tool_call(response_text)):
+            if not collect_tool_calls(response_text, native_calls) and (
+                    claims_action_without_doing(response_text)
+                    or user_requested_tool_action(last_user_msg)):
                 await broadcast_to_managers(
                     "\u001b[33m[GUARD] Reply claimed an action with no tool call — retrying.\u001b[0m")
                 yield sse({"type": "status", "text": "RETRYING AS A REAL ACTION"})
+                # With native tools, "no tool needed" has to be allowed to come back as an
+                # ordinary reply: the JSON-only wording turned a misfire on a plain
+                # greeting into a robotic one-liner.
+                nudge = (
+                    "You described doing that instead of doing it, so nothing happened. If it "
+                    "needs a tool, call the tool now, with nothing before it. If it genuinely "
+                    "needs no tool, just reply to your friend normally."
+                    if supports_tools else
+                    "You described doing that instead of doing it, so nothing happened. "
+                    "Output ONLY the JSON tool call that actually performs it — no prose, "
+                    "no preview, no explanation. If it genuinely needs no tool, say so in "
+                    "one short sentence.")
                 retry_messages = list(incoming_messages) + [
                     {"role": "assistant", "content": str(response_text)},
-                    {"role": "user", "content":
-                        "You described doing that instead of doing it, so nothing happened. "
-                        "Output ONLY the JSON tool call that actually performs it — no prose, "
-                        "no preview, no explanation. If it genuinely needs no tool, say so in "
-                        "one short sentence."},
+                    {"role": "user", "content": nudge},
                 ]
                 async for evt in stream_ollama_turn({**payload, "messages": retry_messages}):
                     if evt["type"] == "_done":
-                        response_text = evt["text"]
+                        response_text, native_calls = evt["text"], evt["tool_calls"]
                     elif evt["type"] != "delta":
                         yield sse(evt)
 
@@ -2435,35 +2591,31 @@ async def chat_stream(request: Request, token: str = Depends(get_token)):
             last_tool_output = ""
             tools_used = []
             while turn_count < 5:
-                tool_call = extract_tool_call(response_text)
-                if not tool_call:
+                calls = collect_tool_calls(response_text, native_calls)
+                if not calls:
                     break
-                tool_name = tool_call.get("tool") or tool_call.get("tool_call")
-                yield sse({"type": "status", "text": f"TOOL: {tool_name}"})
-                output_str = await execute_tool_call(tool_call, broadcast_to_managers)
-                last_tool_output = output_str or ""
-                # Recorded before the break: a tool that ran and came back empty still
-                # ran, and the user is owed that just as much as a successful one.
-                tools_used.append(describe_tool_call(tool_call, last_tool_output))
-                if not output_str:
+                results = []
+                for call, raw in calls:
+                    tool_name = call.get("tool") or call.get("tool_call")
+                    yield sse({"type": "status", "text": f"TOOL: {tool_name}"})
+                    output_str = await execute_tool_call(call, broadcast_to_managers)
+                    last_tool_output = output_str or ""
+                    # Recorded even when empty: a tool that ran and came back with nothing
+                    # still ran, and the user is owed that just as much as a successful one.
+                    tools_used.append(describe_tool_call(call, last_tool_output))
+                    results.append((call, raw, output_str))
+                # A text-protocol call that ran nothing has no result to report back. A
+                # native one still gets a `tool` message saying so, so it can correct itself.
+                if not native_calls and not results[0][2]:
                     break
 
-                clean_messages = []
-                for m in incoming_messages:
-                    content = m.get("content")
-                    if isinstance(content, list):
-                        text_parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
-                        content = " ".join(text_parts) if text_parts else "Attached media"
-                    clean_messages.append({"role": m.get("role", "user"), "content": str(content or "")})
-                clean_messages.append({"role": "assistant", "content": str(response_text)})
-                clean_messages.append({"role": "user", "content": f"[TOOL EXECUTION RESULT]:\n{output_str}\n\nPlease proceed or summarize the result cleanly for the user."})
-                incoming_messages = clean_messages
+                incoming_messages = append_tool_round(flatten_messages(incoming_messages), response_text, results)
 
                 yield sse({"type": "status", "text": f"THINKING (turn {turn_count + 2})"})
-                payload = {"model": target_model, "messages": incoming_messages}
+                payload = {"model": target_model, "messages": incoming_messages, **extras}
                 async for evt in stream_ollama_turn(payload):
                     if evt["type"] == "_done":
-                        response_text = evt["text"]
+                        response_text, native_calls = evt["text"], evt["tool_calls"]
                     else:
                         yield sse(evt)
                 turn_count += 1
