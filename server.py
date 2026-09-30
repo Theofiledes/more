@@ -1941,10 +1941,10 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
                 # Report where it actually landed, not where it was asked for — those
                 # used to differ silently.
                 output_str = f"File saved to {resolved}"
-                await broadcast_fn(f"[32m[TOOL: write_file] Wrote {resolved}[0m")
+                await broadcast_fn(f"\u001b[32m[TOOL: write_file] Wrote {resolved}\u001b[0m")
             except PermissionError as e:
                 output_str = str(e)
-                await broadcast_fn(f"[31m[TOOL: write_file] {e}[0m")
+                await broadcast_fn(f"\u001b[31m[TOOL: write_file] {e}\u001b[0m")
             except IsADirectoryError:
                 # Models routinely pass the containing directory instead of the file.
                 # Say exactly what is wrong so the next turn can fix it rather than
@@ -1955,7 +1955,7 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
                 await broadcast_fn(f"\u001b[31m[TOOL: write_file] '{path}' is a directory\u001b[0m")
             except OSError as e:
                 output_str = f"Failed to save '{path}': {e}"
-                await broadcast_fn(f"[31m[TOOL: write_file] {e}[0m")
+                await broadcast_fn(f"\u001b[31m[TOOL: write_file] {e}\u001b[0m")
     elif tool_name in ["spawn_agent", "delegate", "micro_agent"]:
         agent_name = tool_call.get("agent") or tool_call.get("name")
         task_desc = tool_call.get("task") or tool_call.get("prompt", "")
@@ -1963,7 +1963,7 @@ async def execute_tool_call(tool_call: dict, broadcast_fn) -> str:
             output_str = await run_micro_agent(agent_name, task_desc)
     elif tool_name == "weather":
         location = tool_call.get("location", "New York")
-        await broadcast_fn(f"[36m[TOOL: weather] Fetching live weather for '{location}'...[0m")
+        await broadcast_fn(f"\u001b[36m[TOOL: weather] Fetching live weather for '{location}'...\u001b[0m")
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 geo = await client.get(f"https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1&language=en&format=json")
