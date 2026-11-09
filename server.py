@@ -454,6 +454,10 @@ def get_available_model():
             chat_models = [m for m in models if "moondream" not in m and "llava" not in m]
             if chat_models:
                 if DEFAULT_MODEL:
+                    # Exact name first: "ornith:9b" must not resolve to "ornith:9b-32k"
+                    # just because Ollama happens to list that one earlier.
+                    if DEFAULT_MODEL in chat_models:
+                        return DEFAULT_MODEL
                     for cm in chat_models:
                         if DEFAULT_MODEL in cm:
                             return cm
