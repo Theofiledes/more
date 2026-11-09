@@ -21,10 +21,20 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass
+    # Run with a Python that lacks python-dotenv (the system one, say), .env would be
+    # silently ignored and every check would report a missing token. Read it by hand:
+    # KEY=VALUE lines, last one wins, like the server.
+    _env = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    if os.path.exists(_env):
+        for _line in open(_env, encoding="utf-8"):
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
 
 OLLAMA = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-TOKEN = os.getenv("API_TOKEN") or os.getenv("VITE_BMO_API_KEY") or ""
+TOKEN = (os.getenv("API_TOKEN") or os.getenv("BMO_MASTER_TOKEN")
+         or os.getenv("VITE_BMO_API_KEY") or "")  # same precedence as server.py
 PORT = os.getenv("BMO_PORT", "18789")
 BMO = os.getenv("BMO_CHECK_URL", f"http://localhost:{PORT}").rstrip("/")
 
@@ -71,7 +81,7 @@ print("=" * 58)
 # 1. Configuration
 if not TOKEN:
     report(False, "API token configured", "",
-           "cp .env.example .env, then set VITE_BMO_API_KEY to a random secret")
+           "cp .env.example .env, then set BMO_MASTER_TOKEN to a random secret")
 elif TOKEN == "bmo-secret-key-2026":
     report(True, "API token configured", "using the well-known default")
     warn("Token is the public default",

@@ -126,6 +126,13 @@ ok "ollama present"
 
 # ---------------------------------------------------------------- 2. python env
 step "Python environment"
+# A venv points at the Python that made it. After an OS upgrade (3.12 -> 3.14, say) that
+# interpreter is gone and the venv is dead weight: reusing it fails at pip, confusingly.
+if [ -d venv ] && ! ./venv/bin/python3 -c 'import sys' >/dev/null 2>&1; then
+    stale="venv.stale-$(date +%Y%m%d%H%M%S)"
+    mv venv "$stale"
+    warn "venv/ was built for a Python that's no longer installed. Moved it to $stale/ (safe to delete)."
+fi
 if [ -d venv ]; then
     ok "venv/ already exists — reusing it"
 else
@@ -218,7 +225,7 @@ ok "dist/ built"
 
 # ---------------------------------------------------------------- 8. verify
 step "Verifying"
-python3 scripts/check_setup.py
+./venv/bin/python3 scripts/check_setup.py
 CHECK_RC=$?
 
 printf '\n%s──────────────────────────────────────────────%s\n' "$DIM" "$RST"
