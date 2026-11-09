@@ -1017,8 +1017,11 @@ export default function App() {
           pendPart += text;
           if (!flushTimer) {
             flushTimer = setTimeout(() => {
-              setStreamingText(s => s + pendPart);
+              // Copy before clearing: React may run the updater after this
+              // callback returns, by which time pendPart is already ''.
+              const chunk = pendPart;
               pendPart = ''; flushTimer = null;
+              setStreamingText(s => s + chunk);
             }, 50);
           }
         },
@@ -1027,8 +1030,9 @@ export default function App() {
           thinkPend += text;
           if (!thinkFlushTimer) {
             thinkFlushTimer = setTimeout(() => {
-              setStreamingThinking(s => s + thinkPend);
+              const chunk = thinkPend;
               thinkPend = ''; thinkFlushTimer = null;
+              setStreamingThinking(s => s + chunk);
             }, 50);
           }
         },
@@ -1042,7 +1046,10 @@ export default function App() {
           setStreamingText('');
         },
       });
-      if (pendPart) setStreamingText(s => s + pendPart); // flush any trailing coalesced text
+      // The stream is over and the final text arrives in `result`, so drop any pending
+      // coalesced chunk; a timer left running would re-add it after the reset below.
+      clearTimeout(flushTimer); clearTimeout(thinkFlushTimer);
+      pendPart = ''; thinkPend = '';
       setStreamingText('');
       setStreamingThinking('');
       cleanText = result.text || "BMO is computing... If there is no reply, please check local server link!";
@@ -1175,6 +1182,13 @@ export default function App() {
     setTimeout(() => setIsHappy(false), 900);
   };
   const isHeroFace = activeMessages.length === 0;
+  // A long reply needs the screen more than the face does: once the latest BMO
+  // message (or the one streaming in) passes ~280 chars, dock the face to the same
+  // slim strip short viewports use. It grows back on the next short reply.
+  const LONG_REPLY_CHARS = 280;
+  const lastMsg = activeMessages[activeMessages.length - 1];
+  const isLongReply = (isLoading && streamingText.length > LONG_REPLY_CHARS)
+    || (!isLoading && lastMsg?.sender === 'bmo' && (lastMsg.text?.length ?? 0) > LONG_REPLY_CHARS);
 
   return (
     <>
@@ -1219,7 +1233,7 @@ export default function App() {
                 </header>
                 <div
                   className={`shrink-0 max-h-[40%] relative flex items-center justify-center bg-[#b5d6a7] border-b-2 border-dashed border-[#2d482e]/30 overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none ${
-                    compactViewport
+                    compactViewport || (isAuthenticated && !isServerSleeping && !isHeroFace && isLongReply)
                       ? 'h-[56px]'
                       : !isAuthenticated || isServerSleeping || isHeroFace ? 'h-[190px] sm:h-[220px] lg:h-[280px]' : 'h-[92px] sm:h-[104px] lg:h-[160px]'
                   }`}
