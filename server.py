@@ -1806,10 +1806,12 @@ async def list_models(token: str = Depends(get_token)):
         res = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         if res.ok:
             models = [m["name"] for m in res.json().get("models", [])]
-            return {"models": models}
+            # "default" is what a device should start on: the server's OLLAMA_MODEL, not
+            # whichever model Ollama lists first (that's just the most recently pulled).
+            return {"models": models, "default": get_available_model()}
     except Exception:
         pass
-    return {"models": [get_available_model()]}
+    return {"models": [get_available_model()], "default": get_available_model()}
 
 def extract_tool_call(text: str):
     if not text: return None

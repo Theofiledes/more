@@ -44,7 +44,10 @@ const Settings = ({
           if (data.models && data.models.length > 0) {
             setDynamicModels(data.models);
             if (!activeModel || !data.models.includes(activeModel)) {
-              setActiveModel(data.models[0]);
+              // Start on the server's configured model, not the first one Ollama lists
+              // (the most recently pulled, which on a small laptop may be far too big).
+              const fallback = data.models.find(m => !m.includes('moondream')) || data.models[0];
+              setActiveModel(data.models.includes(data.default) ? data.default : fallback);
             }
           }
         }
