@@ -725,8 +725,6 @@ export default function App() {
     return () => clearTimeout(t);
   }, [isEating]);
 
-  const messagesEndRef = useRef(null);
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, currentUser, activeChatId, isAuthenticated]);
 
   const performServerHandshake = async (user) => {
     const apiUrl = getApiUrl();
@@ -1284,26 +1282,28 @@ export default function App() {
                   ) : (
                     <>
                       <ErrorBoundary>
-                        <ChatFeed messages={activeMessages} currentUser={currentUser} activeChatId={activeChatId} useCrtFilter={useCrtFilter} tts={tts} speakingMsgId={speakingMsgId} setSpeakingMsgId={setSpeakingMsgId} getApiUrl={getApiUrl} getApiToken={getApiToken} />
-                      </ErrorBoundary>
+                        <ChatFeed messages={activeMessages} currentUser={currentUser} activeChatId={activeChatId} useCrtFilter={useCrtFilter} tts={tts} speakingMsgId={speakingMsgId} setSpeakingMsgId={setSpeakingMsgId} getApiUrl={getApiUrl} getApiToken={getApiToken}
+                          footer={<>
                       {isLoading && streamingText && (
-                        <div className="self-start p-2 sm:p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white mx-3 mb-2 text-[10px] bmo-font whitespace-pre-wrap">
+                        <div className="self-start p-2 sm:p-3 rounded-lg border-2 border-[#2d482e] shadow-[2px_2px_0_#2d482e] bg-[#7ba068] text-white text-[10px] bmo-font whitespace-pre-wrap">
                           {streamingText}<span className="bmo-caret">▊</span>
                         </div>
                       )}
                       {isLoading && !streamingText && streamingThinking && (
-                        <div className="self-start max-w-[85%] p-2 sm:p-3 rounded-lg border-2 border-dashed border-[#2d482e]/60 bg-[#1a2e1d] text-[#8fae82] mx-3 mb-2 text-[9px] font-mono italic whitespace-pre-wrap opacity-90">
+                        <div className="self-start max-w-[85%] p-2 sm:p-3 rounded-lg border-2 border-dashed border-[#2d482e]/60 bg-[#1a2e1d] text-[#8fae82] text-[9px] font-mono italic whitespace-pre-wrap opacity-90">
                           <div className="not-italic font-bold opacity-60 mb-1 tracking-wide">💭 BMO IS THINKING...</div>
                           {streamingThinking}<span className="bmo-caret">▊</span>
                         </div>
                       )}
                       {isLoading && !streamingText && !streamingThinking && (
-                        <div className="self-start p-3 rounded-xl border-2 border-[#2d482e] shadow-[3px_3px_0_#2d482e] bg-[#9fc28e] text-[#2d482e] font-bold animate-pulse mx-3 mb-2 flex items-center gap-2 text-[10px] bmo-font">
+                        <div className="self-start p-3 rounded-xl border-2 border-[#2d482e] shadow-[3px_3px_0_#2d482e] bg-[#9fc28e] text-[#2d482e] font-bold animate-pulse flex items-center gap-2 text-[10px] bmo-font">
                           <Loader2 size={14} className="animate-spin text-[#007aff] shrink-0" />
                           <span>{thinkingStatus || "BMO IS COMPUTING... 🎮💭"}</span>
                         </div>
                       )}
-                      <div ref={messagesEndRef} />
+                          </>}
+                        />
+                      </ErrorBoundary>
                       {isEncoding && <div className="px-3 py-2 bg-[#2d482e] text-[#b5d6a7] text-[8px] text-center animate-pulse border-t-2 border-[#2d482e]">[ENCODING OPTICAL DATA...]</div>}
                       {!isEncoding && (pendingFile || pendingImageUrl) && (
                         <div className="px-3 py-2 bg-[#9fc28e] border-t-2 border-[#2d482e] flex items-center justify-between text-[8px]">

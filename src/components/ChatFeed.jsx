@@ -1,7 +1,48 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { Play, FileText, Image as ImageIcon, StopCircle, Brain, Globe, BookOpen, CloudSun, Terminal, FileCode, Users, AlertTriangle, HelpCircle } from 'lucide-react';
 
-const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken }) => {
+const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, setSpeakingMsgId, getApiUrl, getApiToken, footer }) => {
+  // Follow new text to the bottom, but only while the reader is already near the
+  // bottom: someone who scrolled up to reread shouldn't be yanked back down. Sending a
+  // message always re-sticks. The layout effect runs after every render (a streaming
+  // reply growing, a new message); the ResizeObserver catches size changes that come
+  // without a render, like the face strip's height animation or a viewport resize.
+  const scrollRef = useRef(null);
+  const stickRef = useRef(true);
+  const prevTopRef = useRef(0);
+  const lastCountRef = useRef(messages.length);
+  const pin = () => {
+    const el = scrollRef.current;
+    if (el && stickRef.current) { el.scrollTop = el.scrollHeight; prevTopRef.current = el.scrollTop; }
+  };
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Only ever moving *up* means the reader did it; our own pinning only moves down.
+    if (el.scrollTop < prevTopRef.current - 2) stickRef.current = false;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) stickRef.current = true;
+    prevTopRef.current = el.scrollTop;
+  };
+  // Wheel and touch arrive before the scroll they cause, so a stream update landing in
+  // between can't drag the reader back down.
+  const onWheel = (e) => { if (e.deltaY < 0) stickRef.current = false; };
+  const onTouchMove = () => { stickRef.current = false; };
+  useLayoutEffect(() => {
+    if (messages.length !== lastCountRef.current) {
+      const last = messages[messages.length - 1];
+      if (messages.length < lastCountRef.current || last?.sender === 'user') stickRef.current = true;
+      lastCountRef.current = messages.length;
+    }
+    pin();
+  });
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => pin());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const [expandedToolId, setExpandedToolId] = useState(null);
   const [expandedThinkId, setExpandedThinkId] = useState(null);
 
@@ -131,7 +172,7 @@ const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, set
   };
 
   return (
-    <div id="bmo-chat-feed-scroll" className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
+    <div id="bmo-chat-feed-scroll" ref={scrollRef} onScroll={onScroll} onWheel={onWheel} onTouchMove={onTouchMove} onLoadCapture={pin} className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
       {messages.length === 0 ? (
         <div className="text-center text-[#2d482e] opacity-50 mt-10">
           NO MESSAGES YET.
@@ -288,6 +329,7 @@ const ChatFeed = ({ messages, currentUser, useCrtFilter, tts, speakingMsgId, set
           );
         })
       )}
+      {footer}
     </div>
   );
 };
