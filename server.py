@@ -2446,7 +2446,9 @@ USER_WANTS_TOOL_RE = re.compile(
     # separated from the verb by the object, which is the ordinary way to say it.
     r"\b(look(?:\s+\w+){0,3}\s+up|search|google|wikipedia|wiki|find out"
     r"|what'?s the weather|weather in|forecast|storms?"
-    r"|run |execute |git |ls |cat |grep |uname"
+    # "run" alone matched plain chat ("you run on my laptop") and forced a tool retry,
+    # so it only counts with something runnable after it.
+    r"|run (?:the |a |this |that |my )?(?:command|script|tests?|`)|execute |git |ls |cat |grep |uname"
     r"|create (?:a )?(?:file|note|script)|write (?:a )?(?:file|note|script)|make (?:a )?file"
     r"|put a .{0,30}(?:file|markdown|note)|read (?:the )?file|open (?:the )?file)\b", re.I)
 
