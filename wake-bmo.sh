@@ -41,7 +41,8 @@ if curl -s "http://localhost:${OLLAMA_PORT}/api/tags" > /dev/null; then
     echo "✨ Ollama local brain is ONLINE!"
 else
     echo "💤 Starting Ollama service..."
-    ollama serve > /dev/null 2>&1 &
+    if command -v setsid >/dev/null 2>&1; then OSETSID=setsid; else OSETSID=""; fi
+    nohup $OSETSID ollama serve > /dev/null 2>&1 & disown
     sleep 3
 fi
 
@@ -59,7 +60,17 @@ else
     if command -v setsid >/dev/null 2>&1; then SETSID=setsid; else SETSID=""; fi
     nohup $SETSID ./venv/bin/python3 -m uvicorn server:app --host "$BMO_BIND_HOST" --port "$BMO_PORT" > server.log 2>&1 & disown
     echo "⏳ Waiting for BMO to stretch..."
-    sleep 3
+    # Poll instead of a blind sleep: a crash on startup (bad .env, port in use) used to
+    # still print "ACTIVE" below with links to nothing.
+    for _ in $(seq 1 30); do
+        curl -s "http://localhost:${BMO_PORT}/v1/health" > /dev/null && break
+        sleep 1
+    done
+    if ! curl -s "http://localhost:${BMO_PORT}/v1/health" > /dev/null; then
+        echo "❌ BMO didn't come up. Last lines of server.log:"
+        tail -n 15 server.log | sed 's/^/   /'
+        exit 1
+    fi
 fi
 
 # Summary Links
@@ -68,7 +79,11 @@ echo "🎮 BMO DUAL-DASHBOARD SYSTEM ACTIVE!"
 echo ""
 echo "📟 BMO COMPANION UI (open it, then pair the device):"
 echo "   🏠 Laptop: http://localhost:$BMO_PORT/"
-echo "   📱 Phone:  http://$IP:$BMO_PORT/"
+if [ "$BMO_BIND_HOST" = "127.0.0.1" ] || [ "$BMO_BIND_HOST" = "localhost" ]; then
+    echo "   📱 Phone:  off (BMO_BIND_HOST=$BMO_BIND_HOST — this machine only)"
+else
+    echo "   📱 Phone:  http://$IP:$BMO_PORT/"
+fi
 echo ""
 echo "🧠 OLLAMA BRAIN API:"
 echo "   🏠 Endpoint: http://localhost:$OLLAMA_PORT"

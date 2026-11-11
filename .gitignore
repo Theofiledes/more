@@ -71,3 +71,6 @@ MEMORY.md
 # customisation you made. The tool-calling protocol that used to live alongside it now
 # sits in AGENTS.md, which stays tracked and keeps updating.
 SOUL.md
+
+# README's context-window recipe writes this; never commit it.
+Modelfile

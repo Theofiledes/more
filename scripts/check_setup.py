@@ -6,6 +6,7 @@ this up right?" — so every failure names the specific thing to change rather t
 printing a status code and leaving you to guess.
 
     python3 scripts/check_setup.py
+    python3 scripts/check_setup.py --install-only   # skip server checks (setup.sh uses this)
 """
 import importlib.util
 import json
@@ -36,6 +37,7 @@ OLLAMA = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 TOKEN = (os.getenv("API_TOKEN") or os.getenv("BMO_MASTER_TOKEN")
          or os.getenv("VITE_BMO_API_KEY") or "")  # same precedence as server.py
 PORT = os.getenv("BMO_PORT", "18789")
+INSTALL_ONLY = "--install-only" in sys.argv
 BMO = os.getenv("BMO_CHECK_URL", f"http://localhost:{PORT}").rstrip("/")
 
 GREEN, RED, YELLOW, DIM, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
@@ -117,35 +119,19 @@ except Exception as e:
            "start it with `ollama serve`, or set OLLAMA_URL in .env")
     chat_models = []
 
-# 3. Context window — the quiet one that makes BMO seem forgetful
-if chat_models:
-    try:
-        _, ps = get(f"{OLLAMA}/api/ps", timeout=5)
-        loaded = {m.get("name"): m.get("context_length") for m in ps.get("models", [])}
-        ctx = next((v for v in loaded.values() if v), None)
-        if ctx is None:
-            warn("Model context window",
-                 "No model loaded yet, so its real context is unknown. Send BMO a "
-                 "message, then re-run this check.")
-        elif ctx < 8192:
-            warn("Model context window",
-                 f"Only {ctx} tokens — BMO will forget things mid-conversation. "
-                 "See the README section 'Context window' to raise num_ctx.")
-        else:
-            report(True, "Model context window", f"{ctx} tokens")
-    except Exception:
-        pass
-
 # 4. BMO server
 server_up = False
-try:
-    _, health = get(f"{BMO}/v1/health", timeout=5)
-    server_up = True
-    report(health.get("backend") == "OK", "BMO server reachable",
-           f"{BMO} — ollama link: {health.get('ollama')}, model: {health.get('active_model')}")
-except Exception as e:
-    report(False, "BMO server reachable", str(e)[:70],
-           "start it with ./wake-bmo.sh")
+if INSTALL_ONLY:
+    print(f"  {DIM}(server checks skipped: --install-only){RESET}")
+else:
+    try:
+        _, health = get(f"{BMO}/v1/health", timeout=5)
+        server_up = True
+        report(health.get("backend") == "OK", "BMO server reachable",
+               f"{BMO} — ollama link: {health.get('ollama')}, model: {health.get('active_model')}")
+    except Exception as e:
+        report(False, "BMO server reachable", str(e)[:70],
+               "start it with ./wake-bmo.sh")
 
 # 5. Auth
 if server_up:
@@ -171,13 +157,33 @@ if server_up and chat_models:
                             {"messages": [{"role": "user", "content": "Say OK"}]},
                             token=TOKEN)
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        text = re.sub(r"\[face:[^\]]*\]\s*", "", text)  # BMO's face tags are UI-only
         report(bool(text.strip()), "BMO answers a message", text.strip()[:60])
     except urllib.error.HTTPError as e:
         report(False, "BMO answers a message", f"HTTP {e.code}")
     except Exception as e:
         report(False, "BMO answers a message", str(e)[:70])
 
-# 7. Optional extras — absence is fine, so these never fail the run
+# 7. Context window (after the round trip, which loads the model) — the quiet one that makes BMO seem forgetful
+if chat_models and not INSTALL_ONLY:
+    try:
+        _, ps = get(f"{OLLAMA}/api/ps", timeout=5)
+        loaded = {m.get("name"): m.get("context_length") for m in ps.get("models", [])}
+        ctx = next((v for v in loaded.values() if v), None)
+        if ctx is None:
+            warn("Model context window",
+                 "No model loaded yet, so its real context is unknown. Send BMO a "
+                 "message, then re-run this check.")
+        elif ctx < 8192:
+            warn("Model context window",
+                 f"Only {ctx} tokens — BMO will forget things mid-conversation. "
+                 "See the README section 'Context window' to raise num_ctx.")
+        else:
+            report(True, "Model context window", f"{ctx} tokens")
+    except Exception:
+        pass
+
+# 8. Optional extras — absence is fine, so these never fail the run
 print(f"\n  {DIM}Optional:{RESET}")
 voice = importlib.util.find_spec("faster_whisper") is not None
 print(f"    voice input (push-to-talk): "
