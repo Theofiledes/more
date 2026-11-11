@@ -1,0 +1,29 @@
+name: 💡 Feature request
+description: Suggest something BMO should be able to do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the idea! Plain language is perfect — no need for technical detail.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like BMO to do?
+      placeholder: "e.g. Remind me to water my plants every Sunday"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would it help you?
+      placeholder: What are you trying to get done? How do you do it today?
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where would you use it?
+      multiple: true
+      options:
+        - Laptop / desktop (browser)
+        - Android app
+        - Both
+        - Not sure

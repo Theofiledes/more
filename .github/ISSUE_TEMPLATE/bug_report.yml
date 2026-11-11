@@ -1,0 +1,29 @@
+name: 🐛 Bug report
+description: Something broke or didn't install
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste your `.env`, API token, or pairing code here** — issues are public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Ran ./setup.sh  2. ..."
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `./venv/bin/python3 scripts/check_setup.py`
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: OS, GPU, and Ollama model
+      placeholder: "e.g. Ubuntu 24.04, RTX 3060 12GB, qwen2.5:3b"
