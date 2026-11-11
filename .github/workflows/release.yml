@@ -20,9 +20,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22          # matches .nvmrc; Capacitor 8 requires >=22
           cache: 'npm'
@@ -31,12 +31,16 @@ jobs:
       # VERSION_21, so a 17 toolchain fails with "invalid source release: 21". This only
       # ever broke in CI — local builds pass because a current Android Studio ships a
       # JDK 21, so the mismatch is invisible until a release is tagged.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '21'
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The default also installs the legacy 'tools' package, which cmdline-tools 16
+          # no longer has, so the step dies before the build starts. Gradle fetches the rest.
+          packages: 'platform-tools'
 
       - name: Install dependencies
         run: npm ci

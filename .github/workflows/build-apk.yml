@@ -11,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout Source Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           # 22, matching .nvmrc, lint.yml and release.yml. This said 18, which fails
           # before it ever reaches Android: vite's rolldown imports styleText from
@@ -24,13 +24,17 @@ jobs:
           cache: 'npm'
 
       - name: Setup Java JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '21'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The default also installs the legacy 'tools' package, which cmdline-tools 16
+          # no longer has, so the step dies before the build starts. Gradle fetches the rest.
+          packages: 'platform-tools'
 
       - name: Install Node Dependencies
         run: npm install
